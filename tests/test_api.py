@@ -293,14 +293,17 @@ class TestRecentPredictionsEndpoint:
             }
         ]
         
-        with patch('sqlite3.connect') as mock_connect:
-            mock_cursor = MagicMock()
-            mock_cursor.fetchall.return_value = [
-                ("pred_123", "2024-01-15T10:30:00", '{"MedInc": 8.3252}', 
-                 4.526, "gradient_boosting_v1.0", 45.2)
-            ]
-            mock_connect.return_value.__enter__.return_value.cursor.return_value = mock_cursor
-            
+        # Properly mock the database connection
+        # Create a context manager mock with proper return values
+        mock_connection = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall.return_value = [
+            ("pred_123", "2024-01-15T10:30:00", '{"MedInc": 8.3252}', 
+             4.526, "gradient_boosting_v1.0", 45.2)
+        ]
+        mock_connection.cursor.return_value = mock_cursor
+        
+        with patch('sqlite3.connect', return_value=mock_connection):
             response = client.get("/predictions/recent?limit=10")
             assert response.status_code == 200
             
@@ -353,14 +356,30 @@ class TestModelManager:
         mock_model = MagicMock()
         mock_joblib.return_value = mock_model
         
-        with patch('src.api.app.ModelManager.load_model'):
-            from src.api.app import ModelManager
-            
-            manager = ModelManager()
-            manager.load_model()
-            
-            # Verify model loading was attempted
-            mock_listdir.assert_called()
+        # Create a direct import of ModelManager without using the patch
+        # This is the key difference - we're not using the patch that's applied at module level
+        from src.api.app import ModelManager as DirectModelManager
+        
+        # Create a new class to use for testing
+        class TestableModelManager(DirectModelManager):
+            def __init__(self):
+                self.model = None
+                self.scaler = None
+                self.model_metadata = None
+                self.feature_names = [
+                    'MedInc', 'HouseAge', 'AveRooms', 'AveBedrms',
+                    'Population', 'AveOccup', 'Latitude', 'Longitude'
+                ]
+                # Don't call load_model in init
+        
+        # Create an instance without calling load_model
+        manager = TestableModelManager()
+        
+        # Now call load_model manually - this will use our mocks
+        manager.load_model()
+        
+        # Verify model loading was attempted
+        mock_listdir.assert_called_once()
     
     def test_model_not_loaded_prediction(self):
         """Test prediction when model is not loaded."""
@@ -399,7 +418,8 @@ class TestDatabaseManager:
             mock_cursor.execute.assert_called()
     
     @patch('sqlite3.connect')
-    def test_log_prediction(self, mock_connect):
+    @patch('os.makedirs')
+    def test_log_prediction(self, mock_makedirs, mock_connect):
         """Test prediction logging."""
         mock_cursor = MagicMock()
         mock_connect.return_value.cursor.return_value = mock_cursor
@@ -407,7 +427,13 @@ class TestDatabaseManager:
         with patch('src.api.app.ModelManager.load_model'):
             from src.api.app import DatabaseManager
             
-            db_manager = DatabaseManager("test.db")
+            # Create a temp path for testing
+            test_db_path = "logs/test.db"
+            
+            # Mock the makedirs to avoid file system operations
+            mock_makedirs.return_value = None
+            
+            db_manager = DatabaseManager(test_db_path)
             
             # Mock the initialization to avoid actual database operations
             with patch.object(db_manager, 'init_database'):
