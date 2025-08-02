@@ -1,6 +1,6 @@
 # Multi-stage Docker build for California Housing Prediction API
 # Stage 1: Base image with Python and dependencies
-FROM python:3.9-slim as base
+FROM python:3.9-slim AS base
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -19,7 +19,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Stage 2: Dependencies installation
-FROM base as dependencies
+FROM base AS dependencies
 
 # Copy requirements file
 COPY requirements.txt .
@@ -29,7 +29,7 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
 # Stage 3: Production image
-FROM dependencies as production
+FROM dependencies AS production
 
 # Set environment variable to indicate Docker environment
 ENV RUNNING_IN_DOCKER=true
@@ -40,17 +40,18 @@ RUN useradd --create-home --shell /bin/bash mlops \
 
 # Copy application code
 COPY --chown=mlops:mlops src/ ./src/
-COPY --chown=mlops:mlops models/ ./models/
-COPY --chown=mlops:mlops logs/ ./logs/
+
+# Create necessary directories first
+RUN mkdir -p /app/logs /app/models /app/data /app/mlruns /app/results /app/mlflow-artifacts \
+    && chown -R mlops:mlops /app
+
+# Copy main app files
 COPY --chown=mlops:mlops setup.py ./
 COPY --chown=mlops:mlops requirements.txt ./
 COPY --chown=mlops:mlops docker-entrypoint.sh ./
-COPY --chown=mlops:mlops data/california_housing.csv* ./data/
-COPY --chown=mlops:mlops data/california_housing.joblib* ./data/
 
-# Create necessary directories
-RUN mkdir -p /app/logs /app/models /app/data /app/mlruns /app/results /app/mlflow-artifacts \
-    && chown -R mlops:mlops /app
+# Create data directory if needed
+RUN mkdir -p /app/data && chown -R mlops:mlops /app/data
 
 # Switch to non-root user
 USER mlops
