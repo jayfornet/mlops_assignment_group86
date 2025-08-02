@@ -141,29 +141,27 @@ Best model is automatically selected based on RMSE and registered in MLflow.
 - **Health Monitoring**: `/health` endpoint for service status
 - **Prediction Tracking**: Input/output logging for model monitoring
 
-## 🧪 Testing
+## 🧪 Running Tests
+
+### Prepare Test Environment
+Before running tests, ensure all necessary directories exist:
 
 ```bash
-pytest tests/ -v
+# On Linux/macOS
+python scripts/prepare_test_env.py
+
+# On Windows PowerShell
+.\scripts\prepare_test_env.ps1
 ```
 
-## 🔄 CI/CD Pipeline
+### Run Tests
+```bash
+# Run all tests with coverage
+pytest tests/ -v --cov=src --cov-report=html
 
-GitHub Actions workflow includes:
-
-1. **Code Quality**: Linting and formatting
-2. **Testing**: Unit and integration tests
-3. **Docker Build**: Container image creation
-4. **Deployment**: Automated deployment pipeline
-
-## 📈 MLflow Tracking
-
-Access MLflow UI at `http://localhost:5000` to view:
-
-- Experiment runs and comparisons
-- Model metrics and parameters
-- Model versioning and registry
-- Artifact storage
+# Run specific test file
+pytest tests/test_api.py -v
+```
 
 ## 🛠️ Development
 
