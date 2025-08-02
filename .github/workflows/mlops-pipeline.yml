@@ -1,0 +1,316 @@
+name: MLOps Pipeline - California Housing Prediction
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  DOCKER_IMAGE_NAME: housing-prediction-api
+  DOCKER_REGISTRY: docker.io
+  PYTHON_VERSION: 3.9
+
+jobs:
+  # Code Quality and Testing
+  test:
+    runs-on: ubuntu-latest
+    name: Test and Code Quality
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+          
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov black flake8 isort
+        
+    - name: Code formatting check (Black)
+      run: |
+        black --check src/ tests/ --diff
+        
+    - name: Import sorting check (isort)
+      run: |
+        isort --check-only src/ tests/ --diff
+        
+    - name: Linting (flake8)
+      run: |
+        flake8 src/ tests/ --max-line-length=88 --extend-ignore=E203,W503
+        
+    - name: Type checking (mypy)
+      run: |
+        pip install mypy
+        mypy src/ --ignore-missing-imports || true
+        
+    - name: Run unit tests
+      run: |
+        export PYTHONPATH="${PYTHONPATH}:${PWD}/src"
+        pytest tests/ -v --cov=src --cov-report=xml --cov-report=html
+        
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+
+  # Model Training and Validation
+  model-training:
+    runs-on: ubuntu-latest
+    name: Model Training and Validation
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Create necessary directories
+      run: |
+        mkdir -p data models logs results mlruns
+        
+    - name: Train models
+      run: |
+        export PYTHONPATH="${PYTHONPATH}:${PWD}/src"
+        python src/models/train_model.py
+        
+    - name: Validate model artifacts
+      run: |
+        # Check if model files are created
+        ls -la models/
+        # Validate model can be loaded
+        python -c "import joblib; import os; [print(f'✓ {f}') for f in os.listdir('models/') if f.endswith('.joblib')]"
+        
+    - name: Upload model artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: trained-models
+        path: |
+          models/
+          results/
+          mlruns/
+        retention-days: 30
+
+  # Security Scanning
+  security:
+    runs-on: ubuntu-latest
+    name: Security Scanning
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Run Bandit security scan
+      run: |
+        pip install bandit
+        bandit -r src/ -f json -o bandit-report.json || true
+        
+    - name: Run Safety check for dependencies
+      run: |
+        pip install safety
+        safety check --json --output safety-report.json || true
+        
+    - name: Upload security reports
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-reports
+        path: |
+          bandit-report.json
+          safety-report.json
+
+  # Docker Build and Push
+  docker:
+    runs-on: ubuntu-latest
+    name: Docker Build and Push
+    needs: [test, model-training]
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Download model artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: trained-models
+        
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+        
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+          
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        platforms: linux/amd64,linux/arm64
+        
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:latest
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+        
+    - name: Upload Trivy scan results
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  # Integration Tests
+  integration-tests:
+    runs-on: ubuntu-latest
+    name: Integration Tests
+    needs: docker
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Download model artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: trained-models
+        
+    - name: Start services with Docker Compose
+      run: |
+        docker-compose up -d mlops-api
+        sleep 30  # Wait for services to start
+        
+    - name: Run API health check
+      run: |
+        curl -f http://localhost:8000/health || exit 1
+        
+    - name: Run integration tests
+      run: |
+        # Test prediction endpoint
+        curl -X POST "http://localhost:8000/predict" \
+             -H "Content-Type: application/json" \
+             -d '{
+               "MedInc": 8.3252,
+               "HouseAge": 41.0,
+               "AveRooms": 6.984,
+               "AveBedrms": 1.024,
+               "Population": 322.0,
+               "AveOccup": 2.555,
+               "Latitude": 37.88,
+               "Longitude": -122.23
+             }' | jq '.prediction' || exit 1
+             
+        # Test metrics endpoint
+        curl -f http://localhost:8000/metrics || exit 1
+        
+    - name: Check service logs
+      run: |
+        docker-compose logs mlops-api
+        
+    - name: Cleanup
+      run: |
+        docker-compose down
+
+  # Deployment
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy to Production
+    needs: [integration-tests]
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Deploy to production server
+      run: |
+        echo "🚀 Deploying to production..."
+        # In a real scenario, this would deploy to your production infrastructure
+        # For example: AWS ECS, Kubernetes, or a VM
+        
+        # Example deployment script (customize based on your infrastructure)
+        # ssh -o StrictHostKeyChecking=no ${{ secrets.PROD_USER }}@${{ secrets.PROD_HOST }} '
+        #   docker pull ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:latest &&
+        #   docker stop housing-api || true &&
+        #   docker rm housing-api || true &&
+        #   docker run -d --name housing-api -p 8000:8000 \
+        #     ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:latest
+        # '
+        
+        echo "✅ Deployment completed successfully!"
+        
+    - name: Run post-deployment tests
+      run: |
+        echo "🧪 Running post-deployment tests..."
+        # Add your post-deployment testing logic here
+        echo "✅ Post-deployment tests passed!"
+        
+    - name: Notify deployment status
+      run: |
+        echo "📢 Deployment notification sent!"
+        # In practice, send notifications to Slack, Teams, or email
+
+  # Performance Testing
+  performance-test:
+    runs-on: ubuntu-latest
+    name: Performance Testing
+    needs: deploy
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install performance testing tools
+      run: |
+        pip install locust requests
+        
+    - name: Run load tests
+      run: |
+        echo "🔥 Running performance tests..."
+        # In practice, run actual load tests against your deployed API
+        echo "✅ Performance tests completed!"

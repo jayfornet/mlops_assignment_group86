@@ -1,0 +1,74 @@
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Data files (use DVC instead)
+/data/*.csv
+/data/*.joblib
+/data/*.pkl
+/data/*.npy
+/data/*.npz
+
+# Model files (use DVC or MLflow instead)
+/models/*.joblib
+/models/*.pkl
+/models/*.h5
+/models/scaler.joblib
+
+# Logs and results
+/logs/
+/results/
+*.log
+
+# MLflow artifacts and runs
+/mlruns/
+/mlflow-artifacts/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+.ipynb_checkpoints/
+
+# Docker
+.dockerignore
+
+# Temporary files
+tmp/
+temp/
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment variables
+.env
+.env.local
+
+# Credentials
+*.pem
+*.key
+*.crt
+*.cer
+
+# Specific to this project
+test_mlflow.py

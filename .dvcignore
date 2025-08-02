@@ -1,0 +1,39 @@
+# DVC Configuration for California Housing MLOps Pipeline
+
+# Data versioning configuration
+# This file tracks the California Housing dataset and ensures reproducible data pipeline
+
+# Dataset information
+# Source: scikit-learn California Housing dataset
+# Features: 8 numerical features (MedInc, HouseAge, AveRooms, AveBedrms, Population, AveOccup, Latitude, Longitude)
+# Target: Median house value (in hundreds of thousands)
+# Samples: ~20,640 samples
+
+# To initialize DVC in this project:
+# 1. Run: dvc init
+# 2. Track the dataset: dvc add data/california_housing.csv
+# 3. Commit changes: git add data/california_housing.csv.dvc .dvc/config
+# 4. Add remote storage (optional): dvc remote add -d myremote <storage-url>
+# 5. Push data (optional): dvc push
+
+# Example remote configurations:
+
+# Local remote (for development)
+# dvc remote add -d local /path/to/local/storage
+
+# AWS S3 remote
+# dvc remote add -d s3remote s3://my-bucket/dvc-storage
+# dvc remote modify s3remote profile myprofile
+
+# Google Cloud Storage remote
+# dvc remote add -d gcsremote gs://my-bucket/dvc-storage
+# dvc remote modify gcsremote project my-project-id
+
+# Azure Blob Storage remote
+# dvc remote add -d azureremote azure://my-container/dvc-storage
+# dvc remote modify azureremote connection_string "..."
+
+# Note: We're versioning the California Housing dataset directly to
+# demonstrate best practices for dataset versioning.
+# This way, the dataset is tracked and can be shared, while keeping
+# the repository size manageable by using DVC.
