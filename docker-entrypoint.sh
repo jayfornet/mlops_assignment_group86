@@ -9,7 +9,14 @@ echo "Created necessary directories"
 
 # Check and validate model files
 echo "Validating model files..."
-python scripts/validate_models.py --models-dir /app/models --create-dummy || echo "Model validation warning, continuing anyway"
+if [ -d "/app/models" ] && [ "$(ls -A /app/models 2>/dev/null)" ]; then
+    echo "Model files found, validating..."
+    python scripts/validate_models.py --models-dir /app/models --create-dummy || echo "Model validation warning, continuing anyway"
+else
+    echo "No model files found, will create dummy model."
+    mkdir -p /app/models
+    python scripts/validate_models.py --models-dir /app/models --create-dummy
+fi
 
 # Check if dataset exists before trying to download
 if [ ! -f "data/california_housing.csv" ] || [ ! -f "data/california_housing.joblib" ]; then

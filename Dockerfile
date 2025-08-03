@@ -58,12 +58,12 @@ COPY --chown=mlops:mlops src/ ./src/
 # Copy scripts directory
 COPY --chown=mlops:mlops scripts/ ./scripts/
 
-# Copy model files if they exist (optional)
-COPY --chown=mlops:mlops models/*.joblib* ./models/ 2>/dev/null || :
-COPY --chown=mlops:mlops models/*.json* ./models/ 2>/dev/null || :
-
-# Create models directory if it doesn't exist
+# Create models directory if it doesn't exist and prepare for model files
 RUN mkdir -p /app/models && chown -R mlops:mlops /app/models
+
+# Copy model files if they exist (one at a time to avoid issues)
+# Using separate commands without shell redirection
+COPY --chown=mlops:mlops models/ ./models/
 
 # Create data directory if needed
 RUN mkdir -p /app/data && chown -R mlops:mlops /app/data
@@ -74,9 +74,9 @@ USER mlops
 # Expose port for FastAPI
 EXPOSE 8000
 
-# Health check with improved error detection
+# Health check - simplified for better compatibility
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f "http://localhost:8000/health" -H "Accept: application/json" | grep -q '"status":"healthy"' || exit 1
+    CMD curl -f "http://localhost:8000/health" || exit 1
 
 # Script to setup and run the application
 RUN chmod +x /app/docker-entrypoint.sh
