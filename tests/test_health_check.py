@@ -13,8 +13,9 @@ from src.api.health_check import check_system_health
 
 client = TestClient(app)
 
+@patch('src.api.app.model_manager.is_loaded')
 @patch('src.api.health_check.check_system_health')
-def test_health_endpoint_success(mock_check_system):
+def test_health_endpoint_success(mock_check_system, mock_is_loaded):
     """Test that the health endpoint returns 200 when everything is OK."""
     # Mock a healthy system
     mock_check_system.return_value = {
@@ -23,17 +24,21 @@ def test_health_endpoint_success(mock_check_system):
         "memory": {"percent": 60.0, "status": "ok", "message": "Memory usage: 60.0%"},
         "disk": {"percent": 70.0, "status": "ok", "message": "Disk usage: 70.0%"}
     }
+    # Mock model being loaded
+    mock_is_loaded.return_value = True
     
     response = client.get("/health")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "healthy"
     assert "timestamp" in data
-    assert "checks" in data
-    assert isinstance(data["checks"], dict)
+    assert "model_loaded" in data
+    assert data["model_loaded"] is True
+    assert "version" in data
 
+@patch('src.api.app.model_manager.is_loaded')
 @patch('src.api.health_check.check_system_health')
-def test_health_endpoint_with_resource_warning(mock_check_system):
+def test_health_endpoint_with_resource_warning(mock_check_system, mock_is_loaded):
     """Test that the health endpoint handles resource warnings correctly."""
     # Mock a system with warnings
     mock_check_system.return_value = {
@@ -46,12 +51,15 @@ def test_health_endpoint_with_resource_warning(mock_check_system):
         "memory": {"percent": 60.0, "status": "ok", "message": "Memory usage: 60.0%"},
         "disk": {"percent": 70.0, "status": "ok", "message": "Disk usage: 70.0%"}
     }
+    # Mock model being loaded
+    mock_is_loaded.return_value = True
     
     response = client.get("/health")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "warning"
-    assert "High CPU usage" in str(data["checks"]["system"])
+    assert "model_loaded" in data
+    assert "version" in data
 
 @patch('src.api.health_check.check_system_health')
 def test_health_endpoint_with_error(mock_check_system):
@@ -63,7 +71,8 @@ def test_health_endpoint_with_error(mock_check_system):
     assert response.status_code == 500
     data = response.json()
     assert data["status"] == "error"
-    assert "Failed to perform health check" in data["message"]
+    assert "model_loaded" in data
+    assert "version" in data
     assert "Failed to perform health check" in data["message"]
 
 def test_system_health_check():

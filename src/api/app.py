@@ -21,7 +21,7 @@ import os
 import json
 import sqlite3
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional, Any
 import uuid
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 from fastapi.responses import Response
@@ -173,6 +173,7 @@ class HealthResponse(BaseModel):
     timestamp: str = Field(..., description="Current timestamp")
     model_loaded: bool = Field(..., description="Whether model is loaded")
     version: str = Field(..., description="API version")
+    checks: Optional[Dict[str, Any]] = Field(None, description="Detailed health check information")
 
 
 class ModelManager:
@@ -362,7 +363,7 @@ async def root():
     }
 
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 async def health_check():
     """
     Health check endpoint that provides system and model status.
@@ -383,6 +384,9 @@ async def health_check():
         # Get model info
         model_info = get_model_info()
         
+        # Check if model is loaded
+        model_loaded = model_manager.is_loaded()
+        
         # Determine overall status
         if system_health.get("status") == "critical" or "error" in system_health:
             status = "error"
@@ -395,6 +399,8 @@ async def health_check():
         health_data = {
             "status": status,
             "timestamp": timestamp,
+            "model_loaded": model_loaded,
+            "version": "1.0.0",
             "checks": {
                 "system": system_health,
                 "model": model_info
@@ -411,6 +417,8 @@ async def health_check():
             content={
                 "status": "error",
                 "timestamp": datetime.now().isoformat(),
+                "model_loaded": False,
+                "version": "1.0.0",
                 "message": "Failed to perform health check",
                 "error": str(e)
             }
