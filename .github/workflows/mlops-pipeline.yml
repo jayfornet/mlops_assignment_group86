@@ -93,6 +93,16 @@ jobs:
         
     - name: Pull dataset from DVC
       run: |
+        # Check if DVC is already initialized
+        if [ ! -d ".dvc" ]; then
+          echo "Initializing DVC"
+          dvc init
+        fi
+        
+        # Add remote if not already set
+        dvc remote list | grep -q github-storage || dvc remote add -d github-storage github://jayfornet/mlops_assignment_group86/releases/data
+        
+        # Pull data
         dvc pull || echo "No data to pull or pull failed"
         
     - name: Train models
@@ -148,8 +158,15 @@ jobs:
         
     - name: Initialize DVC
       run: |
-        dvc init
-        dvc remote add -d github-storage github://jayfornet/mlops_assignment_group86/releases/data
+        # Check if DVC is already initialized
+        if [ ! -d ".dvc" ]; then
+          dvc init
+        else
+          echo "DVC already initialized, skipping initialization"
+        fi
+        
+        # Add remote (will update if already exists)
+        dvc remote add -d github-storage github://jayfornet/mlops_assignment_group86/releases/data || echo "Remote already exists"
         
     - name: Track dataset with DVC
       run: |
