@@ -9,6 +9,7 @@ This module provides:
 - Error handling and validation
 """
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, validator
@@ -42,13 +43,32 @@ PREDICTION_COUNTER = Counter('predictions_total', 'Total number of predictions m
 PREDICTION_HISTOGRAM = Histogram('prediction_duration_seconds', 'Time spent on predictions')
 ERROR_COUNTER = Counter('prediction_errors_total', 'Total number of prediction errors')
 
+# Define lifespan context manager for FastAPI app
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan event handler for application startup and shutdown."""
+    # Startup events
+    logger.info("Starting California Housing Prediction API...")
+    logger.info(f"Model loaded: {model_manager.is_loaded()}")
+    
+    # Create logs directory
+    os.makedirs("logs", exist_ok=True)
+    
+    yield
+    
+    # Shutdown events
+    logger.info("Shutting down California Housing Prediction API...")
+
 # Initialize FastAPI app
 app = FastAPI(
     title="California Housing Price Prediction API",
     description="MLOps pipeline for predicting housing prices using machine learning",
     version="1.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    lifespan=lifespan
 )
 
 # Add CORS middleware
@@ -330,16 +350,6 @@ model_manager = ModelManager()
 db_manager = DatabaseManager()
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Startup event handler."""
-    logger.info("Starting California Housing Prediction API...")
-    logger.info(f"Model loaded: {model_manager.is_loaded()}")
-    
-    # Create logs directory
-    os.makedirs("logs", exist_ok=True)
-
-
 @app.get("/", response_model=Dict)
 async def root():
     """Root endpoint with API information."""
@@ -362,20 +372,49 @@ async def health_check():
     """
     try:
         # Import health check module
-        from src.api.health_check import check_health
+        from src.api.health_check import check_health, check_system_health, get_model_info
         
-        # Get health status
-        health_data = check_health()
+        # Get current timestamp
+        timestamp = datetime.now().isoformat()
+        
+        # Get system health status
+        system_health = check_system_health()
+        
+        # Get model info
+        model_info = get_model_info()
+        
+        # Determine overall status
+        if system_health.get("status") == "critical" or "error" in system_health:
+            status = "error"
+        elif system_health.get("status") == "warning":
+            status = "warning"
+        else:
+            status = "healthy"
+        
+        # Build response
+        health_data = {
+            "status": status,
+            "timestamp": timestamp,
+            "checks": {
+                "system": system_health,
+                "model": model_info
+            }
+        }
+        
         return health_data
     except Exception as e:
         logger.error(f"Error in health check endpoint: {e}")
-        # Return a simplified response if the health check fails
-        return {
-            "status": "warning",
-            "timestamp": datetime.now().isoformat(),
-            "message": "Health check module encountered an error, but API is responsive",
-            "error": str(e)
-        }
+        # Return a simplified response with 500 status code if the health check fails
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "timestamp": datetime.now().isoformat(),
+                "message": "Failed to perform health check",
+                "error": str(e)
+            }
+        )
 
 
 @app.post("/predict", response_model=PredictionResponse)

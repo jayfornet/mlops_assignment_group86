@@ -38,6 +38,68 @@ def get_system_info() -> Dict[str, Any]:
         logger.error(f"Error getting system info: {e}")
         return {"error": f"Error getting system info: {str(e)}"}
 
+def check_system_health() -> Dict[str, Any]:
+    """Check system health (CPU, memory, disk usage).
+    
+    Returns:
+        dict: System health metrics and statuses
+    """
+    try:
+        # Get CPU usage
+        cpu_percent = psutil.cpu_percent(interval=0.5)
+        
+        # Get memory usage
+        memory = psutil.virtual_memory()
+        memory_percent = memory.percent
+        
+        # Get disk usage
+        disk = psutil.disk_usage('/')
+        disk_percent = disk.percent
+        
+        # Determine status levels
+        cpu_status = "ok" if cpu_percent < 80 else "warning" if cpu_percent < 95 else "critical"
+        memory_status = "ok" if memory_percent < 80 else "warning" if memory_percent < 95 else "critical"
+        disk_status = "ok" if disk_percent < 80 else "warning" if disk_percent < 95 else "critical"
+        
+        # Overall status is the worst of all statuses
+        if "critical" in [cpu_status, memory_status, disk_status]:
+            overall_status = "critical"
+        elif "warning" in [cpu_status, memory_status, disk_status]:
+            overall_status = "warning"
+        else:
+            overall_status = "ok"
+        
+        return {
+            "status": overall_status,
+            "cpu": {
+                "percent": cpu_percent,
+                "status": cpu_status,
+                "cores": psutil.cpu_count(),
+                "message": f"CPU usage: {cpu_percent}%"
+            },
+            "memory": {
+                "percent": memory_percent,
+                "available_gb": memory.available / (1024**3),
+                "total_gb": memory.total / (1024**3),
+                "status": memory_status,
+                "message": f"Memory usage: {memory_percent}%"
+            },
+            "disk": {
+                "percent": disk_percent,
+                "free_gb": disk.free / (1024**3),
+                "total_gb": disk.total / (1024**3),
+                "status": disk_status,
+                "message": f"Disk usage: {disk_percent}%"
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error checking system health: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "message": "Failed to check system health"
+        }
+
 def get_model_info() -> Dict[str, Any]:
     """Get model information.
     

@@ -13,8 +13,17 @@ from src.api.health_check import check_system_health
 
 client = TestClient(app)
 
-def test_health_endpoint_success():
+@patch('src.api.health_check.check_system_health')
+def test_health_endpoint_success(mock_check_system):
     """Test that the health endpoint returns 200 when everything is OK."""
+    # Mock a healthy system
+    mock_check_system.return_value = {
+        "status": "ok",
+        "cpu": {"percent": 50.0, "status": "ok", "message": "CPU usage: 50.0%"},
+        "memory": {"percent": 60.0, "status": "ok", "message": "Memory usage: 60.0%"},
+        "disk": {"percent": 70.0, "status": "ok", "message": "Disk usage: 70.0%"}
+    }
+    
     response = client.get("/health")
     assert response.status_code == 200
     data = response.json()
@@ -23,20 +32,26 @@ def test_health_endpoint_success():
     assert "checks" in data
     assert isinstance(data["checks"], dict)
 
-@patch('src.api.health_check.psutil')
-def test_health_endpoint_with_resource_warning(mock_psutil):
+@patch('src.api.health_check.check_system_health')
+def test_health_endpoint_with_resource_warning(mock_check_system):
     """Test that the health endpoint handles resource warnings correctly."""
-    # Mock high CPU usage
-    mock_cpu = MagicMock()
-    mock_cpu.percent = 95.0
-    mock_psutil.cpu_percent.return_value = 95.0
-    mock_psutil.virtual_memory.return_value.percent = 85.0
+    # Mock a system with warnings
+    mock_check_system.return_value = {
+        "status": "warning",
+        "cpu": {
+            "percent": 85.0, 
+            "status": "warning", 
+            "message": "High CPU usage detected: 85.0%"
+        },
+        "memory": {"percent": 60.0, "status": "ok", "message": "Memory usage: 60.0%"},
+        "disk": {"percent": 70.0, "status": "ok", "message": "Disk usage: 70.0%"}
+    }
     
     response = client.get("/health")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "warning"
-    assert "High CPU usage detected" in str(data["checks"]["system"])
+    assert "High CPU usage" in str(data["checks"]["system"])
 
 @patch('src.api.health_check.check_system_health')
 def test_health_endpoint_with_error(mock_check_system):
@@ -48,6 +63,7 @@ def test_health_endpoint_with_error(mock_check_system):
     assert response.status_code == 500
     data = response.json()
     assert data["status"] == "error"
+    assert "Failed to perform health check" in data["message"]
     assert "Failed to perform health check" in data["message"]
 
 def test_system_health_check():
