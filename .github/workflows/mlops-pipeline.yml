@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [ main ]
 
+# Prevent multiple workflow runs on the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write  # Needed for DVC to push data
 
@@ -19,6 +24,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     name: Test and Code Quality
+    timeout-minutes: 15  # Add timeout to prevent hanging jobs
     
     steps:
     - name: Checkout code
@@ -72,6 +78,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Model Training and Validation
     needs: [test, data-preprocessing, data-versioning]
+    timeout-minutes: 30  # Model training can take longer
     
     steps:
     - name: Checkout code
@@ -100,82 +107,13 @@ jobs:
     - name: Train models with preprocessed data
       run: |
         export PYTHONPATH="${PYTHONPATH}:${PWD}/src"
-        # Create a script file to use preprocessed data
-        cat << 'EOL' > src/models/train_from_preprocessed.py
-import os
-import sys
-import logging
-import joblib
-import mlflow
-import numpy as np
-from datetime import datetime
-
-# Add src to path for imports
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from models.train_model import ModelTrainer
-
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-def main():
-    """Train models using preprocessed data"""
-    logger.info("Loading preprocessed data...")
-    
-    try:
-        # Load preprocessed data
-        preprocessed_data = joblib.load('data/processed/preprocessed_data.joblib')
-        
-        X_train = preprocessed_data['X_train']
-        X_val = preprocessed_data['X_val']
-        X_test = preprocessed_data['X_test']
-        y_train = preprocessed_data['y_train']
-        y_val = preprocessed_data['y_val']
-        y_test = preprocessed_data['y_test']
-        
-        logger.info(f"Preprocessed data loaded. Training set shape: {X_train.shape}")
-        
-        # Initialize model trainer
-        model_trainer = ModelTrainer()
-        
-        # Train all models
-        logger.info("Training models...")
-        results = model_trainer.train_all_models(
-            X_train, y_train, X_val, y_val
-        )
-        
-        # Evaluate best model on test set
-        test_metrics = model_trainer.evaluate_on_test(X_test, y_test)
-        
-        # Save best model
-        model_trainer.save_best_model()
-        
-        # Generate model comparison
-        comparison_df = model_trainer.get_model_comparison()
-        logger.info("Model Comparison:")
-        logger.info(f"\n{comparison_df.to_string(index=False)}")
-        
-        # Save comparison to CSV
-        os.makedirs("results", exist_ok=True)
-        comparison_df.to_csv("results/model_comparison.csv", index=False)
-        
-        logger.info("Training pipeline completed successfully!")
-        logger.info(f"Best model: {model_trainer.best_model_name}")
-        logger.info(f"Best validation RMSE: {model_trainer.best_score:.4f}")
-        logger.info(f"Test RMSE: {test_metrics['rmse']:.4f}")
-        
-        return model_trainer, test_metrics
-        
-    except Exception as e:
-        logger.error(f"Training pipeline failed: {str(e)}")
-        raise
-
-if __name__ == "__main__":
-    main()
-EOL
-        
-        # Run training with preprocessed data
-        python src/models/train_from_preprocessed.py
+        # Add error handling for training script
+        python src/models/train_from_preprocessed.py || {
+          echo "Training failed, checking for error logs..."
+          ls -la logs/ || mkdir -p logs/
+          echo "See error details above. Exiting with error."
+          exit 1
+        }
         
     - name: Validate model artifacts
       run: |
@@ -199,6 +137,7 @@ EOL
     runs-on: ubuntu-latest
     name: Data Loading
     needs: [test]
+    timeout-minutes: 15
     
     steps:
     - name: Checkout code
@@ -228,13 +167,14 @@ EOL
       with:
         name: raw-dataset
         path: data/california_housing.csv
-        retention-days: 1
+        retention-days: 7  # Increased from 1 day to provide more debugging time
         
   # Data Preprocessing
   data-preprocessing:
     runs-on: ubuntu-latest
     name: Data Preprocessing
     needs: [data-loading]
+    timeout-minutes: 15
     
     steps:
     - name: Checkout code
@@ -263,94 +203,27 @@ EOL
     - name: Preprocess data
       run: |
         export PYTHONPATH="${PYTHONPATH}:${PWD}/src"
-        # Create a new script for preprocessing only
-        cat << 'EOL' > src/data/preprocess_data.py
-import sys
-import os
-import logging
-from data_processor import DataProcessor
-import pandas as pd
-import joblib
-
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-def main():
-    """Standalone preprocessing script"""
-    logger.info("Starting data preprocessing...")
-    
-    # Initialize data processor
-    data_processor = DataProcessor(random_state=42)
-    
-    # Load data
-    X, y = data_processor.load_data()
-    
-    # Preprocess data
-    X_processed, y_processed = data_processor.preprocess_data(X, y)
-    
-    # Split data
-    X_train, X_val, X_test, y_train, y_val, y_test = data_processor.split_data(
-        X_processed, y_processed
-    )
-    
-    # Scale features
-    X_train_scaled, X_val_scaled, X_test_scaled = data_processor.scale_features(
-        X_train, X_val, X_test
-    )
-    
-    # Save preprocessed data
-    preprocessed_data = {
-        'X_train': X_train_scaled,
-        'X_val': X_val_scaled, 
-        'X_test': X_test_scaled,
-        'y_train': y_train,
-        'y_val': y_val,
-        'y_test': y_test,
-        'scaler': data_processor.scaler,
-        'feature_names': data_processor.feature_names
-    }
-    
-    os.makedirs('data/processed', exist_ok=True)
-    joblib.dump(preprocessed_data, 'data/processed/preprocessed_data.joblib')
-    logger.info("Preprocessed data saved to data/processed/preprocessed_data.joblib")
-    
-    # Save metadata about preprocessing
-    metadata = {
-        'num_samples': {
-            'total': len(X_processed),
-            'train': len(X_train),
-            'val': len(X_val),
-            'test': len(X_test)
-        },
-        'features': data_processor.feature_names,
-        'target': data_processor.target_name
-    }
-    
-    import json
-    with open('data/processed/preprocessing_metadata.json', 'w') as f:
-        json.dump(metadata, f, indent=2)
-    
-    logger.info("Preprocessing complete!")
-
-if __name__ == "__main__":
-    main()
-EOL
-        # Run preprocessing
-        python src/data/preprocess_data.py
+        # Add error handling for preprocessing script
+        python src/data/preprocess_data.py || {
+          echo "Preprocessing failed, checking for raw data..."
+          ls -la data/
+          echo "See error details above. Exiting with error."
+          exit 1
+        }
         
     - name: Upload preprocessed data
       uses: actions/upload-artifact@v4
       with:
         name: preprocessed-data
         path: data/processed
-        retention-days: 1
+        retention-days: 7  # Increased from 1 day to provide more debugging time
 
   # Data Versioning with DVC
   data-versioning:
     runs-on: ubuntu-latest
     name: Data Versioning with DVC
     needs: [data-loading]
+    timeout-minutes: 15
     
     steps:
     - name: Checkout code
@@ -431,6 +304,7 @@ EOL
     name: Docker Build and Push
     needs: [test, model-training, data-preprocessing, data-versioning]
     if: github.ref == 'refs/heads/main'
+    timeout-minutes: 20
     
     steps:
     - name: Checkout code
@@ -449,14 +323,18 @@ EOL
       with:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
+      # Add verification of Docker credentials
+      id: docker_login
         
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
       with:
         context: .
         push: true
-        tags: ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:latest
+        tags: ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:latest,${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }}
         platforms: linux/amd64
+        cache-from: type=registry,ref=${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:buildcache
+        cache-to: type=registry,ref=${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:buildcache,mode=max
         
     - name: Verify Docker image
       run: |
