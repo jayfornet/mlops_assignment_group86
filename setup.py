@@ -53,15 +53,28 @@ def install_dependencies(skip_for_docker=False):
 
 
 def initialize_dvc():
-    """Initialize DVC for data versioning (optional)."""
+    """Initialize DVC for data versioning with GitHub storage."""
     try:
         if not os.path.exists('.dvc'):
             subprocess.check_call(['dvc', 'init'])
-            logger.info("DVC initialized successfully")
+            # Configure GitHub remote
+            subprocess.check_call(['dvc', 'remote', 'add', '-d', 'github-storage', 
+                                  'github://jayfornet/mlops_assignment_group86/releases/data'])
+            logger.info("DVC initialized with GitHub storage")
         else:
             logger.info("DVC already initialized")
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        logger.warning("DVC not available or failed to initialize. Skipping DVC setup.")
+            
+        # Track dataset files if they exist
+        data_files = ['data/california_housing.csv', 'data/california_housing.joblib']
+        for file_path in data_files:
+            if os.path.exists(file_path) and not os.path.exists(f"{file_path}.dvc"):
+                try:
+                    subprocess.check_call(['dvc', 'add', file_path])
+                    logger.info(f"Added {file_path} to DVC tracking")
+                except subprocess.CalledProcessError as e:
+                    logger.warning(f"Failed to add {file_path} to DVC: {e}")
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        logger.warning(f"DVC not available or failed to initialize: {e}. Skipping DVC setup.")
 
 
 def download_dataset():
