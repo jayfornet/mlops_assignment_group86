@@ -71,7 +71,7 @@ jobs:
   model-training:
     runs-on: ubuntu-latest
     name: Model Training and Validation
-    needs: [test, data-versioning]
+    needs: [test, data-preprocessing, data-versioning]
     
     steps:
     - name: Checkout code
@@ -89,26 +89,93 @@ jobs:
         
     - name: Create necessary directories
       run: |
-        mkdir -p data models logs results mlruns
+        mkdir -p data models logs results mlruns data/processed
         
-    - name: Pull dataset from DVC
-      run: |
-        # Check if DVC is already initialized
-        if [ ! -d ".dvc" ]; then
-          echo "Initializing DVC"
-          dvc init
-        fi
+    - name: Download preprocessed data
+      uses: actions/download-artifact@v4
+      with:
+        name: preprocessed-data
+        path: data/processed
         
-        # Add remote if not already set
-        dvc remote list | grep -q github-storage || dvc remote add -d github-storage github://jayfornet/mlops_assignment_group86/releases/data
-        
-        # Pull data
-        dvc pull || echo "No data to pull or pull failed"
-        
-    - name: Train models
+    - name: Train models with preprocessed data
       run: |
         export PYTHONPATH="${PYTHONPATH}:${PWD}/src"
-        python src/models/train_model.py
+        # Create modified train script that uses preprocessed data
+        cat > src/models/train_from_preprocessed.py << 'EOF'
+import os
+import sys
+import logging
+import joblib
+import mlflow
+import numpy as np
+from datetime import datetime
+
+# Add src to path for imports
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+from models.train_model import ModelTrainer
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def main():
+    """Train models using preprocessed data"""
+    logger.info("Loading preprocessed data...")
+    
+    try:
+        # Load preprocessed data
+        preprocessed_data = joblib.load('data/processed/preprocessed_data.joblib')
+        
+        X_train = preprocessed_data['X_train']
+        X_val = preprocessed_data['X_val']
+        X_test = preprocessed_data['X_test']
+        y_train = preprocessed_data['y_train']
+        y_val = preprocessed_data['y_val']
+        y_test = preprocessed_data['y_test']
+        
+        logger.info(f"Preprocessed data loaded. Training set shape: {X_train.shape}")
+        
+        # Initialize model trainer
+        model_trainer = ModelTrainer()
+        
+        # Train all models
+        logger.info("Training models...")
+        results = model_trainer.train_all_models(
+            X_train, y_train, X_val, y_val
+        )
+        
+        # Evaluate best model on test set
+        test_metrics = model_trainer.evaluate_on_test(X_test, y_test)
+        
+        # Save best model
+        model_trainer.save_best_model()
+        
+        # Generate model comparison
+        comparison_df = model_trainer.get_model_comparison()
+        logger.info("Model Comparison:")
+        logger.info(f"\n{comparison_df.to_string(index=False)}")
+        
+        # Save comparison to CSV
+        os.makedirs("results", exist_ok=True)
+        comparison_df.to_csv("results/model_comparison.csv", index=False)
+        
+        logger.info("Training pipeline completed successfully!")
+        logger.info(f"Best model: {model_trainer.best_model_name}")
+        logger.info(f"Best validation RMSE: {model_trainer.best_score:.4f}")
+        logger.info(f"Test RMSE: {test_metrics['rmse']:.4f}")
+        
+        return model_trainer, test_metrics
+        
+    except Exception as e:
+        logger.error(f"Training pipeline failed: {str(e)}")
+        raise
+
+if __name__ == "__main__":
+    main()
+EOF
+        
+        # Run training with preprocessed data
+        python src/models/train_from_preprocessed.py
         
     - name: Validate model artifacts
       run: |
@@ -127,10 +194,10 @@ jobs:
           mlruns/
         retention-days: 30
 
-  # Data Versioning with DVC
-  data-versioning:
+  # Data Loading
+  data-loading:
     runs-on: ubuntu-latest
-    name: Data Versioning with DVC
+    name: Data Loading
     needs: [test]
     
     steps:
@@ -156,6 +223,165 @@ jobs:
         export PYTHONPATH="${PYTHONPATH}:${PWD}/src"
         python src/data/download_dataset.py
         
+    - name: Upload raw dataset
+      uses: actions/upload-artifact@v4
+      with:
+        name: raw-dataset
+        path: data/california_housing.csv
+        retention-days: 1
+        
+  # Data Preprocessing
+  data-preprocessing:
+    runs-on: ubuntu-latest
+    name: Data Preprocessing
+    needs: [data-loading]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Create necessary directories
+      run: |
+        mkdir -p data models logs results mlruns
+        
+    - name: Download raw dataset
+      uses: actions/download-artifact@v4
+      with:
+        name: raw-dataset
+        path: data
+        
+    - name: Preprocess data
+      run: |
+        export PYTHONPATH="${PYTHONPATH}:${PWD}/src"
+        # Create a new script for preprocessing only
+        cat > src/data/preprocess_data.py << 'EOF'
+import sys
+import os
+import logging
+from data_processor import DataProcessor
+import pandas as pd
+import joblib
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def main():
+    """Standalone preprocessing script"""
+    logger.info("Starting data preprocessing...")
+    
+    # Initialize data processor
+    data_processor = DataProcessor(random_state=42)
+    
+    # Load data
+    X, y = data_processor.load_data()
+    
+    # Preprocess data
+    X_processed, y_processed = data_processor.preprocess_data(X, y)
+    
+    # Split data
+    X_train, X_val, X_test, y_train, y_val, y_test = data_processor.split_data(
+        X_processed, y_processed
+    )
+    
+    # Scale features
+    X_train_scaled, X_val_scaled, X_test_scaled = data_processor.scale_features(
+        X_train, X_val, X_test
+    )
+    
+    # Save preprocessed data
+    preprocessed_data = {
+        'X_train': X_train_scaled,
+        'X_val': X_val_scaled, 
+        'X_test': X_test_scaled,
+        'y_train': y_train,
+        'y_val': y_val,
+        'y_test': y_test,
+        'scaler': data_processor.scaler,
+        'feature_names': data_processor.feature_names
+    }
+    
+    os.makedirs('data/processed', exist_ok=True)
+    joblib.dump(preprocessed_data, 'data/processed/preprocessed_data.joblib')
+    logger.info("Preprocessed data saved to data/processed/preprocessed_data.joblib")
+    
+    # Save metadata about preprocessing
+    metadata = {
+        'num_samples': {
+            'total': len(X_processed),
+            'train': len(X_train),
+            'val': len(X_val),
+            'test': len(X_test)
+        },
+        'features': data_processor.feature_names,
+        'target': data_processor.target_name
+    }
+    
+    import json
+    with open('data/processed/preprocessing_metadata.json', 'w') as f:
+        json.dump(metadata, f, indent=2)
+    
+    logger.info("Preprocessing complete!")
+
+if __name__ == "__main__":
+    main()
+EOF
+        # Run preprocessing
+        python src/data/preprocess_data.py
+        
+    - name: Upload preprocessed data
+      uses: actions/upload-artifact@v4
+      with:
+        name: preprocessed-data
+        path: data/processed
+        retention-days: 1
+
+  # Data Versioning with DVC
+  data-versioning:
+    runs-on: ubuntu-latest
+    name: Data Versioning with DVC
+    needs: [data-loading]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Create necessary directories
+      run: |
+        mkdir -p data data/processed models logs results mlruns
+        
+    - name: Download raw dataset artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: raw-dataset
+        path: data
+        
+    - name: Download preprocessed data artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: preprocessed-data
+        path: data/processed
+        
     - name: Initialize DVC
       run: |
         # Check if DVC is already initialized
@@ -168,14 +394,24 @@ jobs:
         # Add remote (will update if already exists)
         dvc remote add -d github-storage github://jayfornet/mlops_assignment_group86/releases/data || echo "Remote already exists"
         
-    - name: Track dataset with DVC
+    - name: Track datasets with DVC
       run: |
+        # Track raw dataset
         if [ -f "data/california_housing.csv" ]; then
           dvc add data/california_housing.csv
           git add data/california_housing.csv.dvc .dvc/config
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git commit -m "Track dataset with DVC" || echo "No changes to commit"
+          git commit -m "Track raw dataset with DVC" || echo "No changes to commit"
+        fi
+        
+        # Track preprocessed data
+        if [ -f "data/processed/preprocessed_data.joblib" ]; then
+          dvc add data/processed/preprocessed_data.joblib
+          git add data/processed/preprocessed_data.joblib.dvc
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git commit -m "Track preprocessed data with DVC" || echo "No changes to commit"
         fi
         
     - name: Push to DVC remote
@@ -193,7 +429,7 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     name: Docker Build and Push
-    needs: [test, model-training, data-versioning]
+    needs: [test, model-training, data-preprocessing, data-versioning]
     if: github.ref == 'refs/heads/main'
     
     steps:
