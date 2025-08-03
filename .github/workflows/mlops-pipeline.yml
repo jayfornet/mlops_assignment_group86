@@ -100,8 +100,8 @@ jobs:
     - name: Train models with preprocessed data
       run: |
         export PYTHONPATH="${PYTHONPATH}:${PWD}/src"
-        # Create modified train script that uses preprocessed data
-        cat > src/models/train_from_preprocessed.py << 'EOF'
+        # Create a script file to use preprocessed data
+        cat << 'EOL' > src/models/train_from_preprocessed.py
 import os
 import sys
 import logging
@@ -172,7 +172,7 @@ def main():
 
 if __name__ == "__main__":
     main()
-EOF
+EOL
         
         # Run training with preprocessed data
         python src/models/train_from_preprocessed.py
@@ -264,7 +264,7 @@ EOF
       run: |
         export PYTHONPATH="${PYTHONPATH}:${PWD}/src"
         # Create a new script for preprocessing only
-        cat > src/data/preprocess_data.py << 'EOF'
+        cat << 'EOL' > src/data/preprocess_data.py
 import sys
 import os
 import logging
@@ -335,7 +335,7 @@ def main():
 
 if __name__ == "__main__":
     main()
-EOF
+EOL
         # Run preprocessing
         python src/data/preprocess_data.py
         
