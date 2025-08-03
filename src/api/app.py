@@ -352,15 +352,30 @@ async def root():
     }
 
 
-@app.get("/health", response_model=HealthResponse)
+@app.get("/health")
 async def health_check():
-    """Health check endpoint."""
-    return HealthResponse(
-        status="healthy" if model_manager.is_loaded() else "unhealthy",
-        timestamp=datetime.now().isoformat(),
-        model_loaded=model_manager.is_loaded(),
-        version="1.0.0"
-    )
+    """
+    Health check endpoint that provides system and model status.
+    
+    Returns:
+        JSON response with health status information
+    """
+    try:
+        # Import health check module
+        from src.api.health_check import check_health
+        
+        # Get health status
+        health_data = check_health()
+        return health_data
+    except Exception as e:
+        logger.error(f"Error in health check endpoint: {e}")
+        # Return a simplified response if the health check fails
+        return {
+            "status": "warning",
+            "timestamp": datetime.now().isoformat(),
+            "message": "Health check module encountered an error, but API is responsive",
+            "error": str(e)
+        }
 
 
 @app.post("/predict", response_model=PredictionResponse)

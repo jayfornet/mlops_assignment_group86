@@ -55,18 +55,15 @@ COPY --chown=mlops:mlops docker-entrypoint.sh ./
 # Copy application code
 COPY --chown=mlops:mlops src/ ./src/
 
+# Copy scripts directory
+COPY --chown=mlops:mlops scripts/ ./scripts/
+
 # Copy model files if they exist (optional)
 COPY --chown=mlops:mlops models/*.joblib* ./models/ 2>/dev/null || :
 COPY --chown=mlops:mlops models/*.json* ./models/ 2>/dev/null || :
 
-# Create dummy model if no models are available
-RUN python -c "import os, joblib, numpy as np; from sklearn.ensemble import RandomForestRegressor; \
-    os.makedirs('/app/models', exist_ok=True); \
-    if not any(f.endswith('.joblib') for f in os.listdir('/app/models')): \
-        model = RandomForestRegressor(n_estimators=10, random_state=42); \
-        model.fit(np.array([[1, 2, 3, 4, 5, 6, 7, 8]]), np.array([4.5])); \
-        joblib.dump(model, '/app/models/model.joblib'); \
-        print('Created dummy model')" || echo "Failed to create dummy model"
+# Create models directory if it doesn't exist
+RUN mkdir -p /app/models && chown -R mlops:mlops /app/models
 
 # Create data directory if needed
 RUN mkdir -p /app/data && chown -R mlops:mlops /app/data

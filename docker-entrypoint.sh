@@ -7,24 +7,9 @@ echo "Starting Docker entrypoint script..."
 mkdir -p data models logs results mlruns mlflow-artifacts
 echo "Created necessary directories"
 
-# Check if model files exist
-echo "Checking for model files..."
-find /app/models -type f -name "*.joblib" | wc -l || echo "No models found"
-ls -la /app/models || echo "Cannot list models directory"
-
-# If no models are found, create a dummy model
-if [ ! -f "/app/models/model.joblib" ] && [ ! -f "/app/models/gradient_boosting_model.joblib" ]; then
-    echo "No model files found, creating a simple dummy model..."
-    python -c "
-import joblib
-import numpy as np
-from sklearn.ensemble import RandomForestRegressor
-model = RandomForestRegressor(n_estimators=10, random_state=42)
-model.fit(np.array([[1, 2, 3, 4, 5, 6, 7, 8]]), np.array([4.5]))
-joblib.dump(model, '/app/models/model.joblib')
-print('Dummy model created and saved to /app/models/model.joblib')
-"
-fi
+# Check and validate model files
+echo "Validating model files..."
+python scripts/validate_models.py --models-dir /app/models --create-dummy || echo "Model validation warning, continuing anyway"
 
 # Check if dataset exists before trying to download
 if [ ! -f "data/california_housing.csv" ] || [ ! -f "data/california_housing.joblib" ]; then

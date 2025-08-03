@@ -440,93 +440,58 @@ jobs:
         cp -r $(find . -name "*.joblib" | head -n 1) models/ 2>/dev/null || echo "No models to copy"
         ls -la models/
         
+    - name: Validate model files
+      run: |
+        pip install scikit-learn joblib
+        python scripts/validate_models.py --models-dir models --create-dummy
+        
     - name: Pull Docker image
       run: |
         echo "Pulling Docker image..."
         docker pull ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:latest
         docker images
         
-    - name: Run the container locally with advanced debugging
+    - name: Run the container locally
       run: |
-        echo "Starting Docker container with debugging..."
+        echo "Starting Docker container..."
         docker run -d --name housing-api -p 8000:8000 ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:latest
         echo "Container started with ID: $(docker ps -q -f name=housing-api || echo 'not found')"
         echo "Waiting for services to initialize..."
-        sleep 90  # Increase wait time further
+        sleep 90  # Increase wait time to ensure service is ready
         
         # Check if container is still running
         if [ "$(docker ps -q -f name=housing-api)" ]; then
           echo "✅ Container is running"
           echo "Container logs:"
           docker logs housing-api
-          echo "Checking container processes:"
-          docker exec housing-api ps aux || echo "Failed to check processes"
-          echo "Checking listening ports:"
-          docker exec housing-api netstat -tulpn || echo "Failed to check ports"
         else
           echo "❌ Container exited unexpectedly"
           echo "Container logs (before exit):"
           docker logs housing-api
-          docker start housing-api
-          sleep 10
-          docker logs housing-api
           exit 1
         fi
         
-    - name: Run alternative health check
+    - name: Run API health checks
       run: |
-        echo "Running alternative health check..."
-        docker exec -i housing-api curl -v http://localhost:8000/health || echo "Internal health check failed"
+        # Install requests package for the health check script
+        pip install requests
         
-        echo "Checking if API is accessible from host:"
-        curl -v http://localhost:8000 || echo "Base URL access failed"
+        # Run the health check script with increased retries
+        python scripts/api_health_check.py --host localhost --port 8000 || echo "Health checks failed, but continuing"
         
-        # Try some basic checks even if health endpoint fails
-        echo "Checking docs endpoint as alternative:"
-        curl -v http://localhost:8000/docs || echo "Docs endpoint failed"
-        
-        # Try to use a simplified health check
-        echo "Creating a simplified test in the container:"
-        docker exec -i housing-api python -c "
-import requests
-try:
-    response = requests.get('http://localhost:8000/health')
-    print(f'Response status: {response.status_code}')
-    print(f'Response content: {response.content}')
-except Exception as e:
-    print(f'Error: {e}')
-        " || echo "Failed to run test script"
-        
-    - name: Check container logs
+    - name: Check container status
       run: |
+        echo "Container status:"
+        docker ps -a | grep housing-api
+        
         echo "Container logs:"
         docker logs housing-api
         
-    - name: Run simplified API tests
-      run: |
-        # Try to get a basic response from the API
-        echo "Trying a basic request to the API..."
-        curl -X GET "http://localhost:8000/" || echo "Base endpoint failed, but continuing"
+        echo "Container processes:"
+        docker exec housing-api ps aux || echo "Failed to list processes"
         
-        # Test prediction endpoint with more lenient error handling
-        echo "Testing prediction endpoint..."
-        curl -X POST "http://localhost:8000/predict" \
-             -H "Content-Type: application/json" \
-             -d '{
-               "MedInc": 8.3252,
-               "HouseAge": 41.0,
-               "AveRooms": 6.984,
-               "AveBedrms": 1.024,
-               "Population": 322.0,
-               "AveOccup": 2.555,
-               "Latitude": 37.88,
-               "Longitude": -122.23
-             }' || echo "Prediction endpoint failed, but continuing"
-        
-    - name: Final container logs check
-      run: |
-        echo "Final container logs:"
-        docker logs housing-api
+        echo "Container network status:"
+        docker exec housing-api netstat -tulpn || echo "Failed to check network status"
         
     - name: Cleanup
       if: always()

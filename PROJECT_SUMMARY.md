@@ -32,7 +32,7 @@ This project implements a complete MLOps pipeline for predicting California hous
 - **Features**:
   - RESTful prediction endpoint
   - Input validation with Pydantic
-  - Health monitoring
+  - Enhanced health monitoring and system diagnostics
   - Request/response logging
   - Prometheus metrics
   - Database logging (SQLite)
@@ -71,7 +71,8 @@ This project implements a complete MLOps pipeline for predicting California hous
 - Prometheus metrics collection
 - Grafana dashboards (optional)
 - Application logging
-- Health checks and status monitoring
+- Robust health checks and status monitoring
+- System resource monitoring (CPU, memory, disk)
 
 ### Testing & Quality Assurance
 - Unit tests for all components
@@ -119,6 +120,31 @@ Access monitoring tools:
 curl http://localhost:8000/health
 ```
 
+Response:
+```json
+{
+  "status": "healthy",
+  "timestamp": "2023-11-10T15:32:12.543Z",
+  "version": "1.0.0",
+  "checks": {
+    "system": {
+      "cpu": "25%",
+      "memory": "60%",
+      "disk": "45%",
+      "status": "ok"
+    },
+    "database": {
+      "status": "connected",
+      "latency_ms": 3
+    },
+    "model": {
+      "status": "loaded",
+      "version": "gradient_boosting_v1"
+    }
+  }
+}
+```
+
 ### Make Prediction
 ```bash
 curl -X POST "http://localhost:8000/predict" \
@@ -154,6 +180,7 @@ curl -X POST "http://localhost:8000/predict" \
 - Container security best practices
 - Dependency vulnerability scanning
 - Non-root container execution
+- Robust error handling and rate limiting
 
 ## Future Enhancements
 
