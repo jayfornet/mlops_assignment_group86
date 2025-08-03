@@ -71,7 +71,7 @@ jobs:
   model-training:
     runs-on: ubuntu-latest
     name: Model Training and Validation
-    needs: test
+    needs: [test, data-versioning]
     
     steps:
     - name: Checkout code
@@ -91,37 +91,14 @@ jobs:
       run: |
         mkdir -p data models logs results mlruns
         
-    - name: Initialize DVC
+    - name: Pull dataset from DVC
       run: |
-        dvc init
-        dvc remote add -d github-storage github://jayfornet/mlops_assignment_group86/releases/data
+        dvc pull || echo "No data to pull or pull failed"
         
     - name: Train models
       run: |
         export PYTHONPATH="${PYTHONPATH}:${PWD}/src"
         python src/models/train_model.py
-        
-    - name: Track dataset with DVC
-      run: |
-        if [ -f "data/california_housing.csv" ]; then
-          dvc add data/california_housing.csv
-          git add data/california_housing.csv.dvc .dvc/config
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git commit -m "Track dataset with DVC" || echo "No changes to commit"
-        fi
-        
-        if [ -f "data/california_housing.joblib" ]; then
-          dvc add data/california_housing.joblib
-          git add data/california_housing.joblib.dvc
-          git config --local user.email "github-actions[bot]@users.noreply.github.com" || true
-          git config --local user.name "github-actions[bot]" || true
-          git commit -m "Track dataset with DVC" || echo "No changes to commit"
-        fi
-        
-    - name: Push to DVC remote
-      run: |
-        dvc push || echo "No data to push or push failed"
         
     - name: Validate model artifacts
       run: |
@@ -140,11 +117,66 @@ jobs:
           mlruns/
         retention-days: 30
 
+  # Data Versioning with DVC
+  data-versioning:
+    runs-on: ubuntu-latest
+    name: Data Versioning with DVC
+    needs: [test]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Create necessary directories
+      run: |
+        mkdir -p data models logs results mlruns
+        
+    - name: Download dataset
+      run: |
+        export PYTHONPATH="${PYTHONPATH}:${PWD}/src"
+        python src/data/download_dataset.py
+        
+    - name: Initialize DVC
+      run: |
+        dvc init
+        dvc remote add -d github-storage github://jayfornet/mlops_assignment_group86/releases/data
+        
+    - name: Track dataset with DVC
+      run: |
+        if [ -f "data/california_housing.csv" ]; then
+          dvc add data/california_housing.csv
+          git add data/california_housing.csv.dvc .dvc/config
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git commit -m "Track dataset with DVC" || echo "No changes to commit"
+        fi
+        
+    - name: Push to DVC remote
+      run: |
+        dvc push || echo "No data to push or push failed"
+        
+    - name: DVC status summary
+      run: |
+        echo "🔍 DVC Status Summary:"
+        dvc status
+        echo "📊 DVC Metrics:"
+        dvc metrics show || echo "No metrics tracked yet"
+
   # Docker Build and Push
   docker:
     runs-on: ubuntu-latest
     name: Docker Build and Push
-    needs: [test, model-training]
+    needs: [test, model-training, data-versioning]
     if: github.ref == 'refs/heads/main'
     
     steps:
