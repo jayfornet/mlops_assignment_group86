@@ -203,6 +203,10 @@ class ModelManager:
             # Look for model files
             model_files = [f for f in os.listdir(model_dir) if f.endswith('_best_model.joblib')]
             
+            # If no specific best model files, look for any joblib files
+            if not model_files:
+                model_files = [f for f in os.listdir(model_dir) if f.endswith('.joblib')]
+            
             if not model_files:
                 logger.error("No trained model found. Please train a model first.")
                 return
@@ -215,13 +219,26 @@ class ModelManager:
             logger.info(f"Model loaded successfully from: {model_path}")
             
             # Load metadata if available
-            metadata_file = model_file.replace('_best_model.joblib', '_metadata.json')
-            metadata_path = os.path.join(model_dir, metadata_file)
+            base_name = os.path.splitext(model_file)[0]
+            possible_metadata_files = [
+                base_name.replace('_best_model', '_metadata') + '.json',
+                base_name + '_metadata.json',
+                base_name.replace('_model', '_metadata') + '.json',
+                'model_metadata.json'
+            ]
             
-            if os.path.exists(metadata_path):
-                with open(metadata_path, 'r') as f:
-                    self.model_metadata = json.load(f)
-                logger.info("Model metadata loaded successfully")
+            metadata_loaded = False
+            for metadata_file in possible_metadata_files:
+                metadata_path = os.path.join(model_dir, metadata_file)
+                if os.path.exists(metadata_path):
+                    with open(metadata_path, 'r') as f:
+                        self.model_metadata = json.load(f)
+                    logger.info(f"Model metadata loaded successfully from {metadata_path}")
+                    metadata_loaded = True
+                    break
+            
+            if not metadata_loaded:
+                logger.warning("No model metadata found. Using default feature names.")
             
             # Load scaler (would be saved during training)
             scaler_path = os.path.join(model_dir, "scaler.joblib")
