@@ -12,7 +12,7 @@ This module provides:
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 import pandas as pd
 import numpy as np
 import joblib
@@ -51,10 +51,13 @@ async def lifespan(app: FastAPI):
     """Lifespan event handler for application startup and shutdown."""
     # Startup events
     logger.info("Starting California Housing Prediction API...")
-    logger.info(f"Model loaded: {model_manager.is_loaded()}")
     
     # Create logs directory
     os.makedirs("logs", exist_ok=True)
+    
+    # Initialize model manager (defined later in the file)
+    global model_manager
+    logger.info(f"Model loaded: {model_manager.is_loaded() if 'model_manager' in globals() else False}")
     
     yield
     
@@ -105,34 +108,35 @@ class HousingInput(BaseModel):
     Latitude: float = Field(..., ge=30, le=45, description="Latitude")
     Longitude: float = Field(..., ge=-130, le=-110, description="Longitude")
     
-    @validator('AveBedrms')
-    def validate_bedrooms_ratio(cls, v, values):
+    @field_validator('AveBedrms')
+    def validate_bedrooms_ratio(cls, v, info):
         """Validate that bedrooms don't exceed rooms."""
+        values = info.data
         if 'AveRooms' in values and v > values['AveRooms']:
             raise ValueError('Average bedrooms cannot exceed average rooms')
         return v
     
-    @validator('AveOccup')
-    def validate_occupancy(cls, v, values):
+    @field_validator('AveOccup')
+    def validate_occupancy(cls, v, info):
         """Validate reasonable occupancy levels."""
         if v > 10:  # Very high occupancy warning
             logger.warning(f"High occupancy detected: {v}")
         return v
     
-    class Config:
-        """Pydantic configuration."""
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "MedInc": 8.3252,
                 "HouseAge": 41.0,
                 "AveRooms": 6.984,
-                "AveBedrms": 1.024,
+                "AveBedrms": 1.023,
                 "Population": 322.0,
                 "AveOccup": 2.555,
                 "Latitude": 37.88,
                 "Longitude": -122.23
             }
         }
+    )
 
 
 class PredictionResponse(BaseModel):
@@ -144,9 +148,8 @@ class PredictionResponse(BaseModel):
     timestamp: str = Field(..., description="Timestamp of the prediction")
     input_features: Dict = Field(..., description="Input features used for prediction")
     
-    class Config:
-        """Pydantic configuration."""
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "prediction": 4.526,
                 "prediction_id": "pred_123456789",
@@ -164,6 +167,7 @@ class PredictionResponse(BaseModel):
                 }
             }
         }
+    )
 
 
 class HealthResponse(BaseModel):
@@ -174,6 +178,28 @@ class HealthResponse(BaseModel):
     model_loaded: bool = Field(..., description="Whether model is loaded")
     version: str = Field(..., description="API version")
     checks: Optional[Dict[str, Any]] = Field(None, description="Detailed health check information")
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "status": "healthy",
+                "timestamp": "2024-01-15T10:30:00Z",
+                "model_loaded": True,
+                "version": "1.0.0",
+                "checks": {
+                    "system": {
+                        "cpu": 0.2,
+                        "memory": 0.4,
+                        "disk": 0.1
+                    },
+                    "model": {
+                        "model_name": "gradient_boosting",
+                        "version": "1.0"
+                    }
+                }
+            }
+        }
+    )
 
 
 class ModelManager:
@@ -309,7 +335,7 @@ class ModelManager:
         
         try:
             # Convert input to DataFrame
-            input_dict = input_data.dict()
+            input_dict = input_data.model_dump()
             input_df = pd.DataFrame([input_dict])
             
             # Ensure correct feature order
@@ -536,13 +562,13 @@ async def predict_housing_price(input_data: HousingInput):
             prediction_id=prediction_id,
             model_version=f"{model_info['model_name']}_v{model_info['version']}",
             timestamp=start_time.isoformat(),
-            input_features=input_data.dict()
+            input_features=input_data.model_dump()
         )
         
         # Log prediction
         db_manager.log_prediction(
             prediction_id=prediction_id,
-            input_data=input_data.dict(),
+            input_data=input_data.model_dump(),
             prediction=prediction,
             model_version=response.model_version,
             response_time=response_time
