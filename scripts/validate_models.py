@@ -202,24 +202,7 @@ def create_dummy_model(models_dir):
     else:
         logger.error("Failed to create any dummy models")
         return None
-        "features": feature_names,
-        "metrics": {
-            "rmse": 0.5,
-            "mae": 0.4,
-            "r2": 0.8
-        },
-        "parameters": {
-            "n_estimators": 10,
-            "random_state": 42
-        }
-    }
     
-    with open(metadata_path, 'w') as f:
-        json.dump(metadata, f, indent=2)
-    logger.info(f"Model metadata created at {metadata_path}")
-    
-    return model_path
-
 def main(models_dir="models", create_dummy=False, force=False):
     """Main function to validate model files.
     
