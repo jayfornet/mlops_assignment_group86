@@ -9,16 +9,44 @@ echo "Created necessary directories"
 
 # Check and validate model files
 echo "Validating model files..."
-if [ -d "/app/models" ] && [ "$(ls -A /app/models 2>/dev/null)" ]; then
-    echo "Model files found, validating..."
-    python scripts/validate_models.py --models-dir /app/models --create-dummy || {
-        echo "Model validation failed, creating dummy model..."
+MODEL_VALIDATION_ATTEMPTS=0
+MAX_ATTEMPTS=3
+
+while [ $MODEL_VALIDATION_ATTEMPTS -lt $MAX_ATTEMPTS ]; do
+    if [ -d "/app/models" ] && [ "$(ls -A /app/models 2>/dev/null)" ]; then
+        echo "Model files found, validating..."
+        if python scripts/validate_models.py --models-dir /app/models --create-dummy; then
+            echo "Model validation successful!"
+            break
+        else
+            echo "Model validation failed, attempt $((MODEL_VALIDATION_ATTEMPTS+1)) of $MAX_ATTEMPTS"
+            echo "Creating dummy model forcefully..."
+            python scripts/validate_models.py --models-dir /app/models --create-dummy --force
+            if [ $? -eq 0 ]; then
+                echo "Dummy model creation successful!"
+                break
+            fi
+        fi
+    else
+        echo "No model files found, creating dummy model."
+        mkdir -p /app/models
         python scripts/validate_models.py --models-dir /app/models --create-dummy --force
-    }
-else
-    echo "No model files found, creating dummy model."
-    mkdir -p /app/models
-    python scripts/validate_models.py --models-dir /app/models --create-dummy --force
+        if [ $? -eq 0 ]; then
+            echo "Dummy model creation successful!"
+            break
+        fi
+    fi
+    
+    MODEL_VALIDATION_ATTEMPTS=$((MODEL_VALIDATION_ATTEMPTS+1))
+    if [ $MODEL_VALIDATION_ATTEMPTS -lt $MAX_ATTEMPTS ]; then
+        echo "Waiting 5 seconds before retrying model validation..."
+        sleep 5
+    fi
+done
+
+if [ $MODEL_VALIDATION_ATTEMPTS -eq $MAX_ATTEMPTS ]; then
+    echo "WARNING: Failed to validate or create models after $MAX_ATTEMPTS attempts."
+    echo "API may not function correctly. Continuing startup anyway..."
 fi
 
 # Verify the model files exist after validation/creation
