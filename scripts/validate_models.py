@@ -12,6 +12,7 @@ import sys
 import logging
 import argparse
 import glob
+import numpy as np
 
 # Configure logging
 logging.basicConfig(
@@ -19,6 +20,22 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+
+# Define a dummy predictor class that can be pickled
+class DummyPredictor:
+    """A simple dummy model that returns constant predictions."""
+    
+    def __init__(self, feature_names=None):
+        self.feature_names = feature_names or []
+    
+    def predict(self, X):
+        """Return constant predictions."""
+        if hasattr(X, 'shape'):  # numpy array
+            return np.ones(X.shape[0]) * 2.5
+        else:  # assume pandas DataFrame or similar
+            return np.ones(len(X)) * 2.5
+
 
 def find_model_files(models_dir):
     """Find model files in the specified directory.
@@ -60,10 +77,29 @@ def validate_model_load(model_file):
     
     try:
         if ext == '.joblib':
-            import joblib
-            model = joblib.load(model_file)
-            logger.info(f"Successfully loaded joblib model: {type(model)}")
-            return True
+            # Try with joblib first
+            try:
+                import joblib
+                model = joblib.load(model_file)
+                logger.info(f"Successfully loaded joblib model: {type(model)}")
+                return True
+            except Exception as joblib_error:
+                # If loading with joblib fails due to numpy incompatibility,
+                # try loading with pickle in raw mode to bypass numpy version checks
+                if "numpy.dtype size changed" in str(joblib_error):
+                    logger.warning(f"Binary incompatibility detected, trying alternative loading method: {joblib_error}")
+                    try:
+                        import pickle
+                        with open(model_file, 'rb') as f:
+                            # Skip version checks by using pickle directly
+                            model = pickle.load(f)
+                        logger.info(f"Successfully loaded model with pickle fallback: {type(model)}")
+                        return True
+                    except Exception as pickle_error:
+                        logger.error(f"Fallback loading also failed: {pickle_error}")
+                        return False
+                else:
+                    raise joblib_error  # Re-raise if it's not a numpy compatibility issue
         elif ext == '.pkl':
             import pickle
             with open(model_file, 'rb') as f:
@@ -108,6 +144,7 @@ def create_dummy_model(models_dir):
     """
     import joblib
     import json
+    import pickle
     import numpy as np
     from datetime import datetime
     
@@ -150,26 +187,29 @@ def create_dummy_model(models_dir):
                 model = RandomForestRegressor(n_estimators=5, random_state=42)
                 model.fit(X, y)
                 
-                # Save the model
+                # Save the model - try both methods for compatibility
+                # First with joblib (standard)
                 joblib.dump(model, model_path)
+                
+                # Also create a pickle version as backup with .pkl extension
+                pickle_path = model_path.replace('.joblib', '.pkl')
+                with open(pickle_path, 'wb') as f:
+                    pickle.dump(model, f)
+                    
             except Exception as e:
                 logger.warning(f"Failed to create scikit-learn model: {e}")
                 logger.info("Creating simplified dummy model instead")
                 
                 # Create a simple callable class that can predict
-                class DummyPredictor:
-                    def __init__(self):
-                        self.feature_names = feature_names
-                    
-                    def predict(self, X):
-                        """Return constant predictions."""
-                        if isinstance(X, np.ndarray):
-                            return np.ones(X.shape[0]) * 2.5
-                        else:  # assume pandas DataFrame or similar
-                            return np.ones(len(X)) * 2.5
+                model = DummyPredictor(feature_names)
                 
-                model = DummyPredictor()
+                # Save with both methods for compatibility
                 joblib.dump(model, model_path)
+                
+                # Also create a pickle version as backup
+                pickle_path = model_path.replace('.joblib', '.pkl')
+                with open(pickle_path, 'wb') as f:
+                    pickle.dump(model, f)
                 
             logger.info(f"Dummy model created at {model_path}")
             created_models.append(model_path)

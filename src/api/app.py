@@ -251,8 +251,23 @@ class ModelManager:
                 model_path = os.path.join(model_dir, model_file)
                 try:
                     logger.info(f"Attempting to load model from: {model_path}")
-                    self.model = joblib.load(model_path)
-                    logger.info(f"Model loaded successfully from: {model_path}")
+                    try:
+                        # First try with joblib (standard approach)
+                        self.model = joblib.load(model_path)
+                        logger.info(f"Successfully loaded model with joblib: {model_path}")
+                    except Exception as joblib_error:
+                        # If joblib fails with numpy incompatibility, try pickle as fallback
+                        if "numpy.dtype size changed" in str(joblib_error):
+                            logger.warning(f"Binary incompatibility detected with {model_path}: {joblib_error}")
+                            logger.info("Trying alternative loading method with pickle...")
+                            
+                            import pickle
+                            with open(model_path, 'rb') as f:
+                                self.model = pickle.load(f)
+                            logger.info(f"Successfully loaded model with pickle fallback: {model_path}")
+                        else:
+                            # Re-raise if it's not a compatibility issue
+                            raise
                     
                     # Once we have a working model, try to load its metadata
                     self._load_model_metadata(model_dir, model_file)
