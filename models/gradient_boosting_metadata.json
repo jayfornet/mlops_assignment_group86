@@ -1,6 +1,8 @@
 {
   "model_type": "DummyRegressor",
-  "created_at": "2025-08-04T10:38:39.901031",
+  "model_name": "gradient_boosting",
+  "model_version": "1.0.0",
+  "created_at": "2025-08-04T22:22:48.903313",
   "features": [
     "MedInc",
     "HouseAge",

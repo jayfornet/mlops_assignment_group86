@@ -216,8 +216,12 @@ def create_dummy_model(models_dir):
             
             # Create and save model metadata
             metadata_path = os.path.join(models_dir, metadata_filename)
+            # Extract model name from filename (without extension and _best_model)
+            model_name = os.path.splitext(model_filename)[0].replace('_best_model', '')
             metadata = {
                 "model_type": "DummyRegressor",
+                "model_name": model_name,
+                "model_version": "1.0.0",
                 "created_at": datetime.now().isoformat(),
                 "features": feature_names,
                 "metrics": {

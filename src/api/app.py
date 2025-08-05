@@ -270,7 +270,22 @@ class ModelManager:
                             raise
                     
                     # Once we have a working model, try to load its metadata
-                    self._load_model_metadata(model_dir, model_file)
+                    metadata_loaded = self._load_model_metadata(model_dir, model_file)
+                    
+                    if metadata_loaded:
+                        logger.info(f"Loaded model with metadata: {self.model_metadata}")
+                    else:
+                        logger.warning(f"Model loaded but metadata not found for {model_file}")
+                        # Create basic metadata from the model filename
+                        base_name = os.path.splitext(model_file)[0]
+                        model_name = base_name.replace('_best_model', '')
+                        self.model_metadata = {
+                            "model_name": model_name,
+                            "model_type": model_name,
+                            "model_version": "1.0.0",
+                            "created_at": datetime.now().isoformat()
+                        }
+                        logger.info(f"Created default metadata: {self.model_metadata}")
                     
                     # Success - we have a working model
                     break
@@ -311,12 +326,15 @@ class ModelManager:
                 'model_metadata.json'
             ]
             
+            logger.info(f"Looking for metadata files for model: {model_file}")
             for metadata_file in possible_metadata_files:
                 metadata_path = os.path.join(model_dir, metadata_file)
+                logger.info(f"Checking for metadata file: {metadata_path}")
                 if os.path.exists(metadata_path):
                     with open(metadata_path, 'r') as f:
                         self.model_metadata = json.load(f)
                     logger.info(f"Model metadata loaded successfully from {metadata_path}")
+                    logger.info(f"Metadata content: {self.model_metadata}")
                     
                     # Extract feature names from metadata if available
                     if 'features' in self.model_metadata:
@@ -383,9 +401,12 @@ class ModelManager:
         """Get model information."""
         if self.model_metadata:
             return {
-                "model_name": self.model_metadata.get("model_name", "unknown"),
-                "training_timestamp": self.model_metadata.get("training_timestamp", "unknown"),
-                "version": "1.0"
+                "model_name": self.model_metadata.get("model_name", 
+                              # Fallback: Try to extract from the model_type
+                              self.model_metadata.get("model_type", "unknown").lower()),
+                "training_timestamp": self.model_metadata.get("training_timestamp", 
+                                      self.model_metadata.get("created_at", "unknown")),
+                "version": self.model_metadata.get("model_version", "1.0")
             }
         return {"model_name": "unknown", "version": "1.0"}
 
@@ -570,6 +591,7 @@ async def predict_housing_price(input_data: HousingInput):
         
         # Get model info
         model_info = model_manager.get_model_info()
+        logger.info(f"Model info for prediction: {model_info}")
         
         # Create response
         response = PredictionResponse(
