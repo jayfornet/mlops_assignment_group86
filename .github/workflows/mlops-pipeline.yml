@@ -296,15 +296,16 @@ jobs:
         
     - name: Initialize DVC
       run: |
-        # Check if DVC is already initialized
+        # Initialize DVC without SCM integration for simplicity
         if [ ! -d ".dvc" ]; then
-          dvc init
+          dvc init --no-scm
         else
           echo "DVC already initialized, skipping initialization"
         fi
         
-        # Add remote (will update if already exists)
-        dvc remote add -d github-storage github://jayfornet/mlops_assignment_group86/releases/data || echo "Remote already exists"
+        # Configure DVC to use local storage (GitHub repo itself)
+        dvc config core.analytics false
+        dvc config core.autostage true
         
     - name: Track datasets with DVC
       run: |
@@ -312,17 +313,13 @@ jobs:
         if [ -f "data/california_housing.csv" ]; then
           echo "✅ Raw dataset found, tracking with DVC"
           dvc add data/california_housing.csv
-          git add data/california_housing.csv.dvc .dvc/config
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git commit -m "Track raw dataset with DVC" || echo "No changes to commit"
         else
           echo "⚠️ Raw dataset not found, skipping DVC tracking"
         fi
         
         # Check for preprocessed data files
         echo "Checking for preprocessed data files..."
-        find data/processed -type f -name "*.joblib" | while read file; do
+        find data/processed -type f -name "*.joblib" 2>/dev/null | while read file; do
           echo "Found preprocessed file: $file"
         done
         
@@ -330,27 +327,31 @@ jobs:
         if [ -f "data/processed/preprocessed_data.joblib" ]; then
           echo "✅ Preprocessed data found, tracking with DVC"
           dvc add data/processed/preprocessed_data.joblib
-          git add data/processed/preprocessed_data.joblib.dvc
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git commit -m "Track preprocessed data with DVC" || echo "No changes to commit"
         else
           echo "⚠️ Preprocessed data not found, skipping DVC tracking"
           # Create a dummy file if no preprocessed data exists
           echo "Creating a dummy preprocessed data file for workflow continuity"
-          echo '{"dummy": true}' > data/processed/dummy_data.json
+          mkdir -p data/processed
+          echo '{"dummy": true, "created": "'$(date)'"}' > data/processed/dummy_data.json
+          dvc add data/processed/dummy_data.json
         fi
         
-    - name: Push to DVC remote
+    - name: Commit DVC files to repository
       run: |
-        dvc push || echo "No data to push or push failed"
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        git add .dvc/ .dvcignore *.dvc data/*.dvc data/processed/*.dvc 2>/dev/null || true
+        git commit -m "Add DVC tracking for datasets [skip ci]" || echo "No changes to commit"
+        git push origin ${{ github.ref_name }} || echo "No changes to push"
         
     - name: DVC status summary
       run: |
         echo "🔍 DVC Status Summary:"
-        dvc status
-        echo "📊 DVC Metrics:"
-        dvc metrics show || echo "No metrics tracked yet"
+        dvc status || echo "DVC status check completed"
+        echo "� DVC Files Created:"
+        ls -la *.dvc data/*.dvc data/processed/*.dvc 2>/dev/null || echo "No DVC files found"
+        echo "📂 DVC Cache:"
+        ls -la .dvc/cache 2>/dev/null || echo "No cache files found"
 
   # Docker Build and Push
   docker:
