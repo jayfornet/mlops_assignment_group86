@@ -325,14 +325,21 @@ jobs:
       run: |
         # Track raw dataset
         if [ -f "data/california_housing.csv" ]; then
-          echo "✅ Raw dataset found, checking if already tracked by Git..."
-          if git ls-files --error-unmatch data/california_housing.csv > /dev/null 2>&1; then
-            echo "⚠️ Raw dataset already tracked by Git, removing from Git first..."
-            git rm --cached data/california_housing.csv || echo "File not in Git index"
-            git commit -m "Remove california_housing.csv from Git tracking for DVC" || echo "Nothing to commit"
+          echo "✅ Raw dataset found, checking tracking status..."
+          
+          # Check if already tracked by DVC
+          if [ -f "data/california_housing.csv.dvc" ]; then
+            echo "📦 Raw dataset already tracked by DVC, skipping..."
+          else
+            # Check if tracked by Git and remove if so
+            if git ls-files --error-unmatch data/california_housing.csv > /dev/null 2>&1; then
+              echo "⚠️ Raw dataset tracked by Git, removing from Git first..."
+              git rm --cached data/california_housing.csv || echo "File not in Git index"
+              git commit -m "Remove california_housing.csv from Git tracking for DVC" || echo "Nothing to commit"
+            fi
+            echo "📦 Adding raw dataset to DVC..."
+            dvc add data/california_housing.csv
           fi
-          echo "📦 Adding raw dataset to DVC..."
-          dvc add data/california_housing.csv
         else
           echo "⚠️ Raw dataset not found, skipping DVC tracking"
         fi
@@ -345,14 +352,21 @@ jobs:
         
         # Track preprocessed data
         if [ -f "data/processed/preprocessed_data.joblib" ]; then
-          echo "✅ Preprocessed data found, checking if already tracked by Git..."
-          if git ls-files --error-unmatch data/processed/preprocessed_data.joblib > /dev/null 2>&1; then
-            echo "⚠️ Preprocessed data already tracked by Git, removing from Git first..."
-            git rm --cached data/processed/preprocessed_data.joblib || echo "File not in Git index"
-            git commit -m "Remove preprocessed_data.joblib from Git tracking for DVC" || echo "Nothing to commit"
+          echo "✅ Preprocessed data found, checking tracking status..."
+          
+          # Check if already tracked by DVC
+          if [ -f "data/processed/preprocessed_data.joblib.dvc" ]; then
+            echo "📦 Preprocessed data already tracked by DVC, skipping..."
+          else
+            # Check if tracked by Git and remove if so
+            if git ls-files --error-unmatch data/processed/preprocessed_data.joblib > /dev/null 2>&1; then
+              echo "⚠️ Preprocessed data tracked by Git, removing from Git first..."
+              git rm --cached data/processed/preprocessed_data.joblib || echo "File not in Git index"
+              git commit -m "Remove preprocessed_data.joblib from Git tracking for DVC" || echo "Nothing to commit"
+            fi
+            echo "📦 Adding preprocessed data to DVC..."
+            dvc add data/processed/preprocessed_data.joblib
           fi
-          echo "📦 Adding preprocessed data to DVC..."
-          dvc add data/processed/preprocessed_data.joblib
         else
           echo "⚠️ Preprocessed data not found, skipping DVC tracking"
           # Create a dummy file if no preprocessed data exists
