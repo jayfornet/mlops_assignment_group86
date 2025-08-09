@@ -226,8 +226,40 @@ class ModelManager:
                 logger.error(f"Model directory not found: {model_dir}")
                 return
             
-            # Look for model files in order of preference
+            # Look for the deployment best model first (from CI/CD pipeline)
+            best_model_path = os.path.join(model_dir, "best_model.joblib")
+            metadata_path = os.path.join(model_dir, "model_metadata.json")
+            
+            if os.path.exists(best_model_path):
+                try:
+                    logger.info(f"Loading best model from CI/CD: {best_model_path}")
+                    self.model = joblib.load(best_model_path)
+                    
+                    # Load deployment metadata
+                    if os.path.exists(metadata_path):
+                        with open(metadata_path, 'r') as f:
+                            self.model_metadata = json.load(f)
+                        logger.info(f"Loaded deployment metadata: {self.model_metadata}")
+                    else:
+                        # Create basic metadata
+                        self.model_metadata = {
+                            "model_name": "best_model",
+                            "model_type": "production",
+                            "model_version": "1.0.0",
+                            "created_at": datetime.now().isoformat()
+                        }
+                    
+                    logger.info("Successfully loaded production model from CI/CD pipeline")
+                    return
+                    
+                except Exception as e:
+                    logger.warning(f"Error loading production model: {str(e)}")
+                    # Fall back to legacy model loading
+            
+            # Fallback: Look for legacy model files
+            logger.info("Falling back to legacy model loading...")
             model_files = []
+            
             # First check for specific model types in order of preference
             for model_type in ['random_forest', 'gradient_boosting', 'linear_regression']:
                 model_files = [f for f in os.listdir(model_dir) if f.startswith(model_type) and f.endswith('_best_model.joblib')]
@@ -251,31 +283,13 @@ class ModelManager:
                 model_path = os.path.join(model_dir, model_file)
                 try:
                     logger.info(f"Attempting to load model from: {model_path}")
-                    try:
-                        # First try with joblib (standard approach)
-                        self.model = joblib.load(model_path)
-                        logger.info(f"Successfully loaded model with joblib: {model_path}")
-                    except Exception as joblib_error:
-                        # If joblib fails with numpy incompatibility, try pickle as fallback
-                        if "numpy.dtype size changed" in str(joblib_error):
-                            logger.warning(f"Binary incompatibility detected with {model_path}: {joblib_error}")
-                            logger.info("Trying alternative loading method with pickle...")
-                            
-                            import pickle
-                            with open(model_path, 'rb') as f:
-                                self.model = pickle.load(f)
-                            logger.info(f"Successfully loaded model with pickle fallback: {model_path}")
-                        else:
-                            # Re-raise if it's not a compatibility issue
-                            raise
+                    self.model = joblib.load(model_path)
+                    logger.info(f"Successfully loaded model: {model_path}")
                     
-                    # Once we have a working model, try to load its metadata
+                    # Load metadata for this model
                     metadata_loaded = self._load_model_metadata(model_dir, model_file)
                     
-                    if metadata_loaded:
-                        logger.info(f"Loaded model with metadata: {self.model_metadata}")
-                    else:
-                        logger.warning(f"Model loaded but metadata not found for {model_file}")
+                    if not metadata_loaded:
                         # Create basic metadata from the model filename
                         base_name = os.path.splitext(model_file)[0]
                         model_name = base_name.replace('_best_model', '')
@@ -285,10 +299,10 @@ class ModelManager:
                             "model_version": "1.0.0",
                             "created_at": datetime.now().isoformat()
                         }
-                        logger.info(f"Created default metadata: {self.model_metadata}")
                     
                     # Success - we have a working model
                     break
+                    
                 except Exception as e:
                     logger.warning(f"Error loading model {model_file}: {str(e)}")
                     continue

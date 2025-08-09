@@ -18,27 +18,21 @@ dist/
 build/
 *.egg-info/
 
-# Data files (use DVC instead)
-/data/*.csv
-/data/*.joblib
-/data/*.pkl
-/data/*.npy
-/data/*.npz
 
-# Model files (use DVC or MLflow instead)
-/models/*.joblib
-/models/*.pkl
-/models/*.h5
-/models/scaler.joblib
+
+
 
 # Logs and results
 /logs/
 /results/
 *.log
 
-# MLflow artifacts and runs
-/mlruns/
-/mlflow-artifacts/
+# MLflow - Using Git LFS for large files (*.joblib, *.pkl tracked by LFS)
+# Keep experiments, parameters, metrics, and artifacts
+# Large model files are handled by Git LFS
+mlflow.db
+
+
 
 # IDE files
 .vscode/

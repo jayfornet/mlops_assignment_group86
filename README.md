@@ -7,11 +7,13 @@ A complete MLOps pipeline demonstrating model training, versioning, deployment, 
 This project implements a complete MLOps pipeline with the following components:
 
 - **Data Versioning**: DVC for dataset tracking
-- **Experiment Tracking**: MLflow for model versioning and metrics
+- **Experiment Tracking**: MLflow for model versioning and metrics with Git persistence
 - **API Service**: FastAPI for model serving
 - **Containerization**: Docker for deployment
 - **CI/CD**: GitHub Actions for automated testing and deployment
-- **Monitoring**: Logging and metrics collection
+- **Monitoring**: Comprehensive stack with Prometheus, Grafana, and MLflow tracking
+- **Model Registry**: Centralized model management with MLflow
+- **Metrics & Observability**: Real-time monitoring dashboards
 
 ## 📁 Project Structure
 
@@ -25,8 +27,12 @@ mlops-pipeline/
 │   └── utils/             # Utility functions
 ├── tests/                 # Unit tests
 ├── logs/                  # Application logs
-├── mlruns/                # MLflow tracking
-├── docker/                # Docker configurations
+├── mlruns/                # MLflow tracking (Git-persisted)
+├── mlflow-artifacts/      # MLflow artifacts storage
+├── models/                # Trained model files
+├── monitoring/            # Monitoring configurations
+│   ├── grafana/          # Grafana dashboards & datasources
+│   └── prometheus.yml    # Prometheus configuration
 ├── .github/workflows/     # CI/CD pipelines
 ├── requirements.txt       # Python dependencies
 ├── Dockerfile            # Container configuration
@@ -161,6 +167,53 @@ pytest tests/ -v --cov=src --cov-report=html
 
 # Run specific test file
 pytest tests/test_api.py -v
+```
+
+## 📊 MLflow Experiment Tracking & Persistence
+
+### How MLflow Persistence Works
+
+This project implements a sophisticated MLflow persistence strategy that ensures experiment data survives across pipeline runs:
+
+#### **Git-Based Persistence**
+- MLflow runs and artifacts are automatically committed to the Git repository
+- Each pipeline execution adds to the experiment history (no data loss)
+- Best models are promoted to dedicated deployment folders
+- Experiment metadata is tracked with Git commits
+
+#### **Pipeline Integration**
+1. **Training Phase**: Models are trained with MLflow tracking
+2. **Persistence Phase**: MLflow data is committed to Git repository
+3. **Docker Phase**: Container builds include all historical experiment data
+4. **Deployment Phase**: MLflow UI shows complete experiment history
+
+#### **Key Benefits**
+- **Experiment Continuity**: All runs accumulate over time
+- **Model Comparison**: Compare models across different pipeline executions
+- **Deployment Tracking**: Track which models are deployed when
+- **Collaboration**: Team members see complete experiment history
+
+### Accessing MLflow Data
+
+```bash
+# View experiment tracking locally
+mlflow ui --backend-store-uri file:./mlruns
+
+# Check experiment data in repository
+git log --oneline | grep "MLflow"
+
+# View best model information
+cat mlflow_persistence_info.json
+```
+
+### MLflow in Docker Environment
+
+```bash
+# Start monitoring stack (includes MLflow server)
+docker-compose up -d
+
+# Access MLflow UI
+open http://localhost:5001
 ```
 
 ## 🛠️ Development

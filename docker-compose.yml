@@ -1,22 +1,27 @@
 version: '3.8'
 
 services:
-  # MLOps API Service
+  # MLOps API Service with Enhanced Monitoring
   mlops-api:
     build:
       context: .
       dockerfile: Dockerfile
-      target: production
     container_name: housing-prediction-api
     ports:
       - "8000:8000"
     environment:
       - PYTHONPATH=/app
       - LOG_LEVEL=INFO
+      - MLFLOW_TRACKING_URI=http://mlflow-server:5000
+      - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus_multiproc_dir
     volumes:
       - ./logs:/app/logs
-      - ./models:/app/models
-      - ./data:/app/data
+      - ./models:/app/models:ro
+      - ./data:/app/data:ro
+      - ./mlruns:/app/mlruns:ro
+      - ./mlflow-artifacts:/app/mlflow-artifacts:ro
+      - ./deployment:/app/deployment:ro
+      - ./results:/app/results:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -29,7 +34,7 @@ services:
     depends_on:
       - mlflow-server
 
-  # MLflow Tracking Server
+  # MLflow Tracking Server with Enhanced Configuration
   mlflow-server:
     image: python:3.9-slim
     container_name: mlflow-tracking-server
@@ -38,17 +43,23 @@ services:
     environment:
       - MLFLOW_BACKEND_STORE_URI=file:///mlflow/mlruns
       - MLFLOW_DEFAULT_ARTIFACT_ROOT=/mlflow/artifacts
+      - MLFLOW_SERVE_ARTIFACTS=true
     volumes:
       - ./mlruns:/mlflow/mlruns
       - ./mlflow-artifacts:/mlflow/artifacts
+      - ./models:/mlflow/models:ro
+      - ./deployment:/mlflow/deployment:ro
+      - ./results:/mlflow/results:ro
+      - ./requirements.txt:/tmp/requirements.txt
     command: >
       bash -c "
-        pip install mlflow &&
+        pip install mlflow[extras] boto3 psycopg2-binary prometheus-client &&
         mlflow server 
         --backend-store-uri file:///mlflow/mlruns 
         --default-artifact-root /mlflow/artifacts 
         --host 0.0.0.0 
         --port 5000
+        --serve-artifacts
       "
     restart: unless-stopped
     healthcheck:
@@ -56,7 +67,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 60s
     networks:
       - mlops-network
 
@@ -82,7 +93,7 @@ services:
     depends_on:
       - mlops-api
 
-  # Grafana for Visualization
+  # Grafana for Visualization and Monitoring
   grafana:
     image: grafana/grafana:latest
     container_name: housing-grafana
@@ -92,15 +103,65 @@ services:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin123
       - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-worldmap-panel,grafana-clock-panel
+      - GF_RENDERING_SERVER_URL=http://renderer:8081/render
+      - GF_RENDERING_CALLBACK_URL=http://grafana:3000/
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
-      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/grafana/dashboard-configs:/var/lib/grafana/dashboards:ro
     restart: unless-stopped
     networks:
       - mlops-network
     depends_on:
       - prometheus
+
+  # Node Exporter for System Metrics
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: housing-node-exporter
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    restart: unless-stopped
+    networks:
+      - mlops-network
+
+  # cAdvisor for Container Metrics
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: housing-cadvisor
+    ports:
+      - "8080:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    privileged: true
+    restart: unless-stopped
+    networks:
+      - mlops-network
+
+  # Grafana Image Renderer for PDF/PNG exports
+  renderer:
+    image: grafana/grafana-image-renderer:latest
+    container_name: housing-renderer
+    ports:
+      - "8081:8081"
+    environment:
+      - ENABLE_METRICS=true
+    restart: unless-stopped
+    networks:
+      - mlops-network
 
   # Nginx Reverse Proxy (Optional)
   nginx:

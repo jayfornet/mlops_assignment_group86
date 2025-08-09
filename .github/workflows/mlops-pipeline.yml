@@ -134,13 +134,165 @@ jobs:
     - name: Train models with preprocessed data
       run: |
         export PYTHONPATH="${PYTHONPATH}:${PWD}/src"
-        # Add error handling for training script
-        python src/models/train_from_preprocessed.py || {
-          echo "Training failed, checking for error logs..."
-          ls -la logs/ || mkdir -p logs/
-          echo "See error details above. Exiting with error."
-          exit 1
-        }
+        # Initialize MLflow if not already done
+        python -c "import mlflow; mlflow.set_tracking_uri('file:./mlruns')"
+        
+        # Train all models and select best one using simplified training
+        python -c "
+import pandas as pd
+import numpy as np
+import joblib
+import mlflow
+import mlflow.sklearn
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+import logging
+import os
+import json
+from datetime import datetime
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def calculate_metrics(y_true, y_pred):
+    return {
+        'rmse': np.sqrt(mean_squared_error(y_true, y_pred)),
+        'mae': mean_absolute_error(y_true, y_pred),
+        'r2_score': r2_score(y_true, y_pred),
+        'mse': mean_squared_error(y_true, y_pred)
+    }
+
+# Setup MLflow
+mlflow.set_tracking_uri('file:./mlruns')
+experiment_name = 'california_housing_prediction'
+experiment = mlflow.get_experiment_by_name(experiment_name)
+if experiment is None:
+    mlflow.create_experiment(experiment_name)
+mlflow.set_experiment(experiment_name)
+
+# Load preprocessed data
+logger.info('Loading preprocessed data...')
+data = joblib.load('data/processed/preprocessed_data.joblib')
+X_train, X_val, X_test = data['X_train'], data['X_val'], data['X_test']
+y_train, y_val, y_test = data['y_train'], data['y_val'], data['y_test']
+
+# Define models
+models_config = {
+    'random_forest': RandomForestRegressor(n_estimators=100, max_depth=10, random_state=42),
+    'gradient_boosting': GradientBoostingRegressor(n_estimators=100, learning_rate=0.1, random_state=42),
+    'linear_regression': LinearRegression()
+}
+
+results = {}
+best_model, best_model_name, best_score = None, None, float('inf')
+
+# Train models
+for model_name, model in models_config.items():
+    logger.info(f'Training {model_name}...')
+    
+    with mlflow.start_run(run_name=f'{model_name}_{datetime.now().strftime(\"%Y%m%d_%H%M%S\")}'):
+        # Train model
+        model.fit(X_train, y_train)
+        
+        # Make predictions
+        y_val_pred = model.predict(X_val)
+        val_metrics = calculate_metrics(y_val, y_val_pred)
+        
+        # Log to MLflow
+        mlflow.log_param('model_type', model_name)
+        mlflow.log_metric('val_rmse', val_metrics['rmse'])
+        mlflow.log_metric('val_r2', val_metrics['r2_score'])
+        mlflow.sklearn.log_model(model, f'{model_name}_model')
+        
+        # Track best model
+        if val_metrics['rmse'] < best_score:
+            best_score = val_metrics['rmse']
+            best_model = model
+            best_model_name = model_name
+        
+        results[model_name] = {'model': model, 'val_metrics': val_metrics}
+        logger.info(f'{model_name} - Val RMSE: {val_metrics[\"rmse\"]:.4f}')
+
+# Save all models
+os.makedirs('models', exist_ok=True)
+for model_name, result in results.items():
+    joblib.dump(result['model'], f'models/{model_name}_best_model.joblib')
+
+# Test best model
+logger.info(f'Testing best model: {best_model_name}')
+y_test_pred = best_model.predict(X_test)
+test_metrics = calculate_metrics(y_test, y_test_pred)
+
+logger.info(f'Training completed! Best: {best_model_name}, Test RMSE: {test_metrics[\"rmse\"]:.4f}')
+
+# Save comparison
+comparison_data = [{'Model': name, 'Val_RMSE': result['val_metrics']['rmse'], 'Is_Best': name == best_model_name} for name, result in results.items()]
+comparison_df = pd.DataFrame(comparison_data)
+os.makedirs('results', exist_ok=True)
+comparison_df.to_csv('results/model_comparison.csv', index=False)
+"
+        
+    - name: Select and prepare best model for deployment
+      run: |
+        export PYTHONPATH="${PYTHONPATH}:${PWD}/src"
+        # Create deployment directory for the best model only
+        mkdir -p deployment/models
+        
+        # Run model selection script to identify and copy best model
+        python -c "
+import os
+import json
+import joblib
+import mlflow
+import pandas as pd
+from pathlib import Path
+
+# Set MLflow tracking URI
+mlflow.set_tracking_uri('file:./mlruns')
+
+# Get the best model from MLflow
+experiment = mlflow.get_experiment_by_name('california_housing_prediction')
+if experiment:
+    runs = mlflow.search_runs(experiment_ids=[experiment.experiment_id], order_by=['metrics.val_rmse ASC'])
+    if not runs.empty:
+        best_run = runs.iloc[0]
+        best_model_name = best_run['params.model_type']
+        best_rmse = best_run['metrics.val_rmse']
+        best_run_id = best_run['run_id']
+        
+        print(f'Best model: {best_model_name} with RMSE: {best_rmse:.4f}')
+        
+        # Copy the best model file to deployment directory
+        source_model = f'models/{best_model_name}_best_model.joblib'
+        target_model = 'deployment/models/best_model.joblib'
+        
+        if os.path.exists(source_model):
+            import shutil
+            shutil.copy2(source_model, target_model)
+            print(f'Copied {source_model} to {target_model}')
+            
+            # Create deployment metadata
+            metadata = {
+                'model_name': best_model_name,
+                'rmse': float(best_rmse),
+                'run_id': best_run_id,
+                'deployment_timestamp': pd.Timestamp.now().isoformat(),
+                'model_file': 'best_model.joblib'
+            }
+            
+            with open('deployment/models/model_metadata.json', 'w') as f:
+                json.dump(metadata, f, indent=2)
+            
+            print('Best model prepared for deployment')
+        else:
+            print(f'Model file {source_model} not found')
+            exit(1)
+else:
+    print('No MLflow experiment found')
+    exit(1)
+"
         
     - name: Validate model artifacts
       run: |
@@ -154,9 +306,16 @@ jobs:
       with:
         name: trained-models
         path: |
-          models/
+          deployment/models/
           results/
           mlruns/
+        retention-days: 30
+        
+    - name: Upload best model for Docker
+      uses: actions/upload-artifact@v4
+      with:
+        name: best-model-for-docker
+        path: deployment/models/
         retention-days: 30
 
   # Data Loading
@@ -353,41 +512,331 @@ jobs:
         echo "📂 DVC Cache:"
         ls -la .dvc/cache 2>/dev/null || echo "No cache files found"
 
+  # MLflow Experiment Persistence
+  mlflow-persistence:
+    runs-on: ubuntu-latest
+    name: MLflow Experiment Persistence
+    needs: [model-training]
+    if: github.ref == 'refs/heads/main'  # Only run on main branch
+    timeout-minutes: 15
+    
+    steps:
+    - name: Checkout code with full history
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for proper Git operations
+        token: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: Install MLflow dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install mlflow pandas numpy scikit-learn
+        
+    - name: Create necessary directories
+      run: |
+        mkdir -p mlruns mlflow-artifacts models logs results
+        
+    - name: Download trained models
+      uses: actions/download-artifact@v4
+      with:
+        name: trained-models
+        path: .
+      continue-on-error: true
+        
+    - name: Download best model for Docker
+      uses: actions/download-artifact@v4
+      with:
+        name: best-model-for-docker
+        path: deployment/models
+      continue-on-error: true
+        
+    - name: Setup MLflow tracking
+      run: |
+        echo "🔧 Setting up MLflow tracking..."
+        export MLFLOW_TRACKING_URI=file://$(pwd)/mlruns
+        export MLFLOW_DEFAULT_ARTIFACT_ROOT=$(pwd)/mlflow-artifacts
+        
+        # Initialize MLflow if not already done
+        python -c "
+        import mlflow
+        import os
+        import json
+        from datetime import datetime
+        
+        # Set tracking URI
+        tracking_uri = f'file://{os.getcwd()}/mlruns'
+        mlflow.set_tracking_uri(tracking_uri)
+        print(f'MLflow tracking URI: {tracking_uri}')
+        
+        # Ensure experiment exists
+        experiment_name = 'california_housing_prediction'
+        try:
+            experiment = mlflow.get_experiment_by_name(experiment_name)
+            if experiment is None:
+                experiment_id = mlflow.create_experiment(
+                    experiment_name,
+                    artifact_location=f'{os.getcwd()}/mlflow-artifacts'
+                )
+                print(f'Created new experiment: {experiment_name} (ID: {experiment_id})')
+            else:
+                print(f'Using existing experiment: {experiment_name} (ID: {experiment.experiment_id})')
+                
+            # Generate experiment summary
+            runs = mlflow.search_runs(experiment_ids=[experiment.experiment_id])
+            print(f'\\n📊 Experiment Summary: {len(runs)} total runs')
+            
+            if len(runs) > 0:
+                print('Recent runs:')
+                for _, run in runs.head(5).iterrows():
+                    model_type = run.get('params.model_type', 'unknown')
+                    rmse = run.get('metrics.val_rmse', 'N/A')
+                    status = run.get('status', 'unknown')
+                    print(f'  - {model_type}: RMSE={rmse} ({status})')
+                
+                # Find and save best model info
+                if 'metrics.val_rmse' in runs.columns:
+                    best_run = runs.loc[runs['metrics.val_rmse'].idxmin()]
+                    best_model_info = {
+                        'run_id': best_run['run_id'],
+                        'model_type': best_run.get('params.model_type', 'unknown'),
+                        'rmse': float(best_run.get('metrics.val_rmse', 0)),
+                        'r2_score': float(best_run.get('metrics.val_r2_score', 0)),
+                        'experiment_id': experiment.experiment_id,
+                        'last_updated': datetime.now().isoformat(),
+                        'pipeline_run': '${{ github.run_number }}'
+                    }
+                    
+                    os.makedirs('deployment/models', exist_ok=True)
+                    with open('deployment/models/best_model_info.json', 'w') as f:
+                        json.dump(best_model_info, f, indent=2)
+                    
+                    print(f'\\n🏆 Best Model: {best_model_info[\"model_type\"]} (RMSE: {best_model_info[\"rmse\"]:.4f})')
+                    
+        except Exception as e:
+            print(f'Error in MLflow setup: {e}')
+        "
+        
+    - name: Create MLflow persistence metadata
+      run: |
+        echo "📝 Creating MLflow persistence metadata..."
+        cat > mlflow_persistence_info.json << EOF
+        {
+          \"persistence_timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
+          \"pipeline_run_number\": \"${{ github.run_number }}\",
+          \"git_sha\": \"${{ github.sha }}\",
+          \"git_ref\": \"${{ github.ref }}\",
+          \"git_actor\": \"${{ github.actor }}\",
+          \"tracking_uri\": \"file://$(pwd)/mlruns\",
+          \"artifact_location\": \"$(pwd)/mlflow-artifacts\",
+          \"experiment_name\": \"california_housing_prediction\",
+          \"persistence_strategy\": \"git_commit_with_lfs\"
+        }
+        EOF
+        
+    - name: Check MLflow data structure
+      run: |
+        echo "🔍 Checking MLflow data structure..."
+        echo "📊 MLruns directory:"
+        find mlruns -type f | head -20 | sort || echo "No mlruns files found"
+        echo "🗂️ Total files in mlruns: $(find mlruns -type f | wc -l 2>/dev/null || echo 0)"
+        
+        echo "🏺 MLflow artifacts directory:"
+        find mlflow-artifacts -type f | head -10 | sort || echo "No artifacts found"
+        echo "🗂️ Total artifacts: $(find mlflow-artifacts -type f | wc -l 2>/dev/null || echo 0)"
+        
+        echo "🎯 Models directory:"
+        find models -name "*.joblib" -o -name "*.pkl" | sort || echo "No model files found"
+        ls -la models/ || echo "Models directory not found"
+        
+        echo "🚀 Deployment models:"
+        ls -la deployment/models/ || echo "Deployment models not found"
+        
+    - name: Configure Git for MLflow commits
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        git config --local core.autocrlf false  # Prevent line ending issues
+        
+    - name: Add MLflow experiments to Git
+      run: |
+        echo "📦 Adding MLflow experiments to Git..."
+        
+        # Add MLflow directories
+        git add mlruns/ mlflow-artifacts/ -f
+        
+        # Add models and deployment artifacts
+        git add models/ deployment/ -f
+        
+        # Add metadata files
+        git add mlflow_persistence_info.json -f
+        
+        # Add results if they exist
+        if [ -d "results" ]; then
+          git add results/ -f
+        fi
+        
+        echo "📋 Git status after adding MLflow files:"
+        git status --porcelain
+        
+    - name: Commit MLflow experiments
+      run: |
+        echo "💾 Committing MLflow experiments..."
+        
+        # Check if there are changes to commit
+        if git diff --cached --quiet; then
+          echo "ℹ️ No new MLflow data to commit"
+        else
+          # Create commit message with run details
+          commit_message="📊 Update MLflow experiments - Pipeline Run #${{ github.run_number }}
+
+          🔬 Experiment: california_housing_prediction
+          📈 Pipeline: ${{ github.workflow }}
+          🔗 Run: ${{ github.run_id }}
+          📅 Date: $(date -u +%Y-%m-%d\ %H:%M:%S\ UTC)
+          👤 Actor: ${{ github.actor }}
+          
+          [skip ci]"
+          
+          git commit -m "$commit_message"
+          echo "✅ MLflow experiments committed successfully"
+          
+          # Show commit details
+          echo "📋 Commit details:"
+          git log -1 --stat
+        fi
+        
+    - name: Push MLflow experiments to repository
+      run: |
+        echo "🚀 Pushing MLflow experiments to repository..."
+        
+        # Push to main branch
+        git push origin main || {
+          echo "❌ Failed to push MLflow experiments"
+          echo "🔍 Checking Git status..."
+          git status
+          echo "🔍 Checking remote configuration..."
+          git remote -v
+          exit 1
+        }
+        
+        echo "✅ MLflow experiments pushed successfully"
+        
+    - name: Create MLflow summary artifact
+      run: |
+        echo "📊 Creating MLflow summary for other jobs..."
+        
+        # Create a summary of what was persisted
+        cat > mlflow_summary.md << EOF
+        # MLflow Persistence Summary
+        
+        **Pipeline Run**: #${{ github.run_number }}
+        **Date**: $(date -u +%Y-%m-%d\ %H:%M:%S\ UTC)
+        **Git SHA**: ${{ github.sha }}
+        
+        ## Persisted Data
+        
+        ### MLflow Experiments
+        - **Tracking URI**: file://$(pwd)/mlruns
+        - **Experiment**: california_housing_prediction
+        - **Total Runs**: $(find mlruns -name "meta.yaml" | wc -l 2>/dev/null || echo 0)
+        
+        ### Artifacts
+        - **Artifact Location**: $(pwd)/mlflow-artifacts
+        - **Total Artifacts**: $(find mlflow-artifacts -type f | wc -l 2>/dev/null || echo 0)
+        
+        ### Models
+        - **Model Files**: $(find models -name "*.joblib" -o -name "*.pkl" | wc -l 2>/dev/null || echo 0)
+        - **Deployment Models**: $(ls deployment/models/ 2>/dev/null | wc -l || echo 0)
+        
+        ## Next Steps
+        1. MLflow data is now committed to the repository
+        2. Docker builds will include this persisted data
+        3. MLflow UI will show all historical experiments
+        
+        EOF
+        
+        echo "📄 MLflow Summary:"
+        cat mlflow_summary.md
+        
+    - name: Upload MLflow summary
+      uses: actions/upload-artifact@v4
+      with:
+        name: mlflow-persistence-summary
+        path: |
+          mlflow_summary.md
+          mlflow_persistence_info.json
+        retention-days: 30
+
   # Docker Build and Push
   docker:
     runs-on: ubuntu-latest
     name: Docker Build and Push
-    needs: [test, model-training, data-preprocessing, data-versioning]
+    needs: [test, model-training, data-preprocessing, data-versioning, mlflow-persistence]
     if: github.ref == 'refs/heads/main'
     timeout-minutes: 20
     
     steps:
-    - name: Checkout code
+    - name: Checkout code with MLflow data
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 1  # Get latest commit with MLflow data
+        
+    - name: Verify MLflow data availability
+      run: |
+        echo "🔍 Verifying MLflow data in repository..."
+        echo "📊 MLruns structure:"
+        find mlruns -type f | head -10 | sort || echo "No mlruns found"
+        echo "🗂️ Total MLflow runs: $(find mlruns -name "meta.yaml" | wc -l 2>/dev/null || echo 0)"
+        
+        echo "🏺 MLflow artifacts:"
+        find mlflow-artifacts -type f | head -10 | sort || echo "No artifacts found"
+        echo "🗂️ Total artifacts: $(find mlflow-artifacts -type f | wc -l 2>/dev/null || echo 0)"
+        
+        echo "🎯 Available models:"
+        find models -name "*.joblib" -o -name "*.pkl" | sort || echo "No model files found"
+        
+        echo "🚀 Deployment models:"
+        ls -la deployment/models/ || echo "No deployment models found"
+        
+        # Check for persistence info
+        if [ -f "mlflow_persistence_info.json" ]; then
+          echo "📝 MLflow persistence info:"
+          cat mlflow_persistence_info.json
+        fi
       
     - name: Download model artifacts
       uses: actions/download-artifact@v4
       with:
-        name: trained-models
+        name: best-model-for-docker
+        path: models/
         
     - name: Check downloaded artifacts
       run: |
         echo "Checking downloaded model artifacts:"
         ls -la models/ || echo "models/ directory not found"
-        find . -name "*.joblib" | grep -v "venv\|node_modules" || echo "No joblib files found"
         
-        # Create models directory if it doesn't exist
-        mkdir -p models
-        
-        # Check if model files need to be moved from a subdirectory
-        if [ ! -f "models/model.joblib" ] && [ -d "models" ]; then
-          echo "Looking for model files to move to models directory..."
-          find . -name "*.joblib" -exec cp {} models/ \; || echo "No joblib files found to copy"
+        # Verify the best model file exists
+        if [ -f "models/best_model.joblib" ]; then
+          echo "✅ Best model found: models/best_model.joblib"
+          ls -la models/best_model.joblib
+        else
+          echo "❌ Best model not found, checking for any model files..."
+          find . -name "*.joblib" | grep -v "venv\|node_modules" || echo "No joblib files found"
+          exit 1
         fi
         
-        # Verify models directory contents
-        echo "Models directory contents:"
-        ls -la models/
+        # Check metadata
+        if [ -f "models/model_metadata.json" ]; then
+          echo "✅ Model metadata found"
+          cat models/model_metadata.json
+        else
+          echo "⚠️ Model metadata not found"
+        fi
         
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
@@ -505,7 +954,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     name: Local Deployment Instructions
-    needs: [integration-tests]
+    needs: [integration-tests, mlflow-persistence]
     if: github.ref == 'refs/heads/main'
     
     steps:
