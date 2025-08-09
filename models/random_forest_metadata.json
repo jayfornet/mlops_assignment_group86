@@ -1,8 +1,5 @@
 {
-  "model_type": "DummyRegressor",
-  "model_name": "random_forest",
-  "model_version": "1.0.0",
-  "created_at": "2025-08-04T22:22:48.890823",
+  "model_type": "SimplePredictorModel",
   "features": [
     "MedInc",
     "HouseAge",
@@ -13,13 +10,6 @@
     "Latitude",
     "Longitude"
   ],
-  "metrics": {
-    "rmse": 0.5,
-    "mae": 0.4,
-    "r2": 0.8
-  },
-  "parameters": {
-    "n_estimators": 5,
-    "random_state": 42
-  }
+  "created_at": "2025-08-04T00:00:00Z",
+  "description": "Compatibility fallback model"
 }
