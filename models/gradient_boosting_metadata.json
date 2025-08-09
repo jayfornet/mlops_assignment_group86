@@ -1,15 +1,11 @@
 {
-  "model_type": "SimplePredictorModel",
-  "features": [
-    "MedInc",
-    "HouseAge",
-    "AveRooms",
-    "AveBedrms",
-    "Population",
-    "AveOccup",
-    "Latitude",
-    "Longitude"
-  ],
-  "created_at": "2025-08-04T00:00:00Z",
-  "description": "Compatibility fallback model"
+  "model_name": "gradient_boosting",
+  "metrics": {
+    "rmse": 20860.170726741806,
+    "mae": 16511.462843347355,
+    "r2_score": 0.9599837067726515,
+    "mse": 435146722.7488158
+  },
+  "saved_at": "2025-08-09T23:48:48.776440",
+  "model_file": "gradient_boosting_best_model.joblib"
 }

@@ -1,0 +1,11 @@
+{
+  "model_name": "linear_regression",
+  "metrics": {
+    "rmse": 19710.377222882915,
+    "mae": 15344.896348158283,
+    "r2_score": 0.9642734555954479,
+    "mse": 388498970.26834154
+  },
+  "saved_at": "2025-08-09T23:48:48.777441",
+  "model_file": "linear_regression_best_model.joblib"
+}

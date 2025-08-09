@@ -135,104 +135,10 @@ jobs:
       run: |
         export PYTHONPATH="${PYTHONPATH}:${PWD}/src"
         # Initialize MLflow if not already done
-        python -c "import mlflow; mlflow.set_tracking_uri('file:./mlruns')"
+        python scripts/init_mlflow.py
         
-        # Train all models and select best one using simplified training
-        python -c "
-import pandas as pd
-import numpy as np
-import joblib
-import mlflow
-import mlflow.sklearn
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-import logging
-import os
-import json
-from datetime import datetime
-
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-def calculate_metrics(y_true, y_pred):
-    return {
-        'rmse': np.sqrt(mean_squared_error(y_true, y_pred)),
-        'mae': mean_absolute_error(y_true, y_pred),
-        'r2_score': r2_score(y_true, y_pred),
-        'mse': mean_squared_error(y_true, y_pred)
-    }
-
-# Setup MLflow
-mlflow.set_tracking_uri('file:./mlruns')
-experiment_name = 'california_housing_prediction'
-experiment = mlflow.get_experiment_by_name(experiment_name)
-if experiment is None:
-    mlflow.create_experiment(experiment_name)
-mlflow.set_experiment(experiment_name)
-
-# Load preprocessed data
-logger.info('Loading preprocessed data...')
-data = joblib.load('data/processed/preprocessed_data.joblib')
-X_train, X_val, X_test = data['X_train'], data['X_val'], data['X_test']
-y_train, y_val, y_test = data['y_train'], data['y_val'], data['y_test']
-
-# Define models
-models_config = {
-    'random_forest': RandomForestRegressor(n_estimators=100, max_depth=10, random_state=42),
-    'gradient_boosting': GradientBoostingRegressor(n_estimators=100, learning_rate=0.1, random_state=42),
-    'linear_regression': LinearRegression()
-}
-
-results = {}
-best_model, best_model_name, best_score = None, None, float('inf')
-
-# Train models
-for model_name, model in models_config.items():
-    logger.info(f'Training {model_name}...')
-    
-    with mlflow.start_run(run_name=f'{model_name}_{datetime.now().strftime(\"%Y%m%d_%H%M%S\")}'):
-        # Train model
-        model.fit(X_train, y_train)
-        
-        # Make predictions
-        y_val_pred = model.predict(X_val)
-        val_metrics = calculate_metrics(y_val, y_val_pred)
-        
-        # Log to MLflow
-        mlflow.log_param('model_type', model_name)
-        mlflow.log_metric('val_rmse', val_metrics['rmse'])
-        mlflow.log_metric('val_r2', val_metrics['r2_score'])
-        mlflow.sklearn.log_model(model, f'{model_name}_model')
-        
-        # Track best model
-        if val_metrics['rmse'] < best_score:
-            best_score = val_metrics['rmse']
-            best_model = model
-            best_model_name = model_name
-        
-        results[model_name] = {'model': model, 'val_metrics': val_metrics}
-        logger.info(f'{model_name} - Val RMSE: {val_metrics[\"rmse\"]:.4f}')
-
-# Save all models
-os.makedirs('models', exist_ok=True)
-for model_name, result in results.items():
-    joblib.dump(result['model'], f'models/{model_name}_best_model.joblib')
-
-# Test best model
-logger.info(f'Testing best model: {best_model_name}')
-y_test_pred = best_model.predict(X_test)
-test_metrics = calculate_metrics(y_test, y_test_pred)
-
-logger.info(f'Training completed! Best: {best_model_name}, Test RMSE: {test_metrics[\"rmse\"]:.4f}')
-
-# Save comparison
-comparison_data = [{'Model': name, 'Val_RMSE': result['val_metrics']['rmse'], 'Is_Best': name == best_model_name} for name, result in results.items()]
-comparison_df = pd.DataFrame(comparison_data)
-os.makedirs('results', exist_ok=True)
-comparison_df.to_csv('results/model_comparison.csv', index=False)
-"
+        # Train all models using the dedicated script
+        python scripts/train_models.py
         
     - name: Select and prepare best model for deployment
       run: |
@@ -241,65 +147,14 @@ comparison_df.to_csv('results/model_comparison.csv', index=False)
         mkdir -p deployment/models
         
         # Run model selection script to identify and copy best model
-        python -c "
-import os
-import json
-import joblib
-import mlflow
-import pandas as pd
-from pathlib import Path
-
-# Set MLflow tracking URI
-mlflow.set_tracking_uri('file:./mlruns')
-
-# Get the best model from MLflow
-experiment = mlflow.get_experiment_by_name('california_housing_prediction')
-if experiment:
-    runs = mlflow.search_runs(experiment_ids=[experiment.experiment_id], order_by=['metrics.val_rmse ASC'])
-    if not runs.empty:
-        best_run = runs.iloc[0]
-        best_model_name = best_run['params.model_type']
-        best_rmse = best_run['metrics.val_rmse']
-        best_run_id = best_run['run_id']
-        
-        print(f'Best model: {best_model_name} with RMSE: {best_rmse:.4f}')
-        
-        # Copy the best model file to deployment directory
-        source_model = f'models/{best_model_name}_best_model.joblib'
-        target_model = 'deployment/models/best_model.joblib'
-        
-        if os.path.exists(source_model):
-            import shutil
-            shutil.copy2(source_model, target_model)
-            print(f'Copied {source_model} to {target_model}')
-            
-            # Create deployment metadata
-            metadata = {
-                'model_name': best_model_name,
-                'rmse': float(best_rmse),
-                'run_id': best_run_id,
-                'deployment_timestamp': pd.Timestamp.now().isoformat(),
-                'model_file': 'best_model.joblib'
-            }
-            
-            with open('deployment/models/model_metadata.json', 'w') as f:
-                json.dump(metadata, f, indent=2)
-            
-            print('Best model prepared for deployment')
-        else:
-            print(f'Model file {source_model} not found')
-            exit(1)
-else:
-    print('No MLflow experiment found')
-    exit(1)
-"
+        python scripts/select_best_model.py
         
     - name: Validate model artifacts
       run: |
         # Check if model files are created
         ls -la models/
-        # Validate model can be loaded
-        python -c "import joblib; import os; [print(f'✓ {f}') for f in os.listdir('models/') if f.endswith('.joblib')]"
+        # Validate model can be loaded using the enhanced validation script
+        python scripts/validate_models_enhanced.py --models-dir models --create-dummy
         
     - name: Upload model artifacts
       uses: actions/upload-artifact@v4
@@ -560,66 +415,11 @@ else:
         echo "🔧 Setting up MLflow tracking..."
         export MLFLOW_TRACKING_URI=file://$(pwd)/mlruns
         export MLFLOW_DEFAULT_ARTIFACT_ROOT=$(pwd)/mlflow-artifacts
+        export MLFLOW_EXPERIMENT_NAME=california_housing_prediction
+        export GITHUB_RUN_NUMBER=${{ github.run_number }}
         
-        # Initialize MLflow if not already done
-        python -c "
-        import mlflow
-        import os
-        import json
-        from datetime import datetime
-        
-        # Set tracking URI
-        tracking_uri = f'file://{os.getcwd()}/mlruns'
-        mlflow.set_tracking_uri(tracking_uri)
-        print(f'MLflow tracking URI: {tracking_uri}')
-        
-        # Ensure experiment exists
-        experiment_name = 'california_housing_prediction'
-        try:
-            experiment = mlflow.get_experiment_by_name(experiment_name)
-            if experiment is None:
-                experiment_id = mlflow.create_experiment(
-                    experiment_name,
-                    artifact_location=f'{os.getcwd()}/mlflow-artifacts'
-                )
-                print(f'Created new experiment: {experiment_name} (ID: {experiment_id})')
-            else:
-                print(f'Using existing experiment: {experiment_name} (ID: {experiment.experiment_id})')
-                
-            # Generate experiment summary
-            runs = mlflow.search_runs(experiment_ids=[experiment.experiment_id])
-            print(f'\\n📊 Experiment Summary: {len(runs)} total runs')
-            
-            if len(runs) > 0:
-                print('Recent runs:')
-                for _, run in runs.head(5).iterrows():
-                    model_type = run.get('params.model_type', 'unknown')
-                    rmse = run.get('metrics.val_rmse', 'N/A')
-                    status = run.get('status', 'unknown')
-                    print(f'  - {model_type}: RMSE={rmse} ({status})')
-                
-                # Find and save best model info
-                if 'metrics.val_rmse' in runs.columns:
-                    best_run = runs.loc[runs['metrics.val_rmse'].idxmin()]
-                    best_model_info = {
-                        'run_id': best_run['run_id'],
-                        'model_type': best_run.get('params.model_type', 'unknown'),
-                        'rmse': float(best_run.get('metrics.val_rmse', 0)),
-                        'r2_score': float(best_run.get('metrics.val_r2_score', 0)),
-                        'experiment_id': experiment.experiment_id,
-                        'last_updated': datetime.now().isoformat(),
-                        'pipeline_run': '${{ github.run_number }}'
-                    }
-                    
-                    os.makedirs('deployment/models', exist_ok=True)
-                    with open('deployment/models/best_model_info.json', 'w') as f:
-                        json.dump(best_model_info, f, indent=2)
-                    
-                    print(f'\\n🏆 Best Model: {best_model_info[\"model_type\"]} (RMSE: {best_model_info[\"rmse\"]:.4f})')
-                    
-        except Exception as e:
-            print(f'Error in MLflow setup: {e}')
-        "
+        # Initialize MLflow using the dedicated script
+        python scripts/setup_mlflow.py
         
     - name: Create MLflow persistence metadata
       run: |
@@ -893,7 +693,7 @@ else:
     - name: Validate model files
       run: |
         pip install scikit-learn joblib
-        python scripts/validate_models.py --models-dir models --create-dummy
+        python scripts/validate_models_enhanced.py --models-dir models --create-dummy
         
     - name: Pull Docker image
       run: |
