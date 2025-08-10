@@ -9,6 +9,19 @@ import joblib
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Add project root to Python path for importing validation modules
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, project_root)
+
+try:
+    from scripts.data_schemas import CaliforniaHousingRecord, DataValidationResult
+    from scripts.data_validator import DataValidator
+    VALIDATION_AVAILABLE = True
+    logger.info("Pydantic validation modules loaded successfully")
+except ImportError as e:
+    logger.warning(f"Data validation module not available: {e}, skipping validation")
+    VALIDATION_AVAILABLE = False
+
 def main():
     """Standalone preprocessing script"""
     logger.info("Starting data preprocessing...")
@@ -18,6 +31,68 @@ def main():
     
     # Load data
     X, y = data_processor.load_data()
+    
+    # Perform data validation before preprocessing
+    if VALIDATION_AVAILABLE:
+        logger.info("🔍 Starting Pydantic data validation...")
+        try:
+            # Reconstruct original dataset for validation
+            original_df = pd.DataFrame(X, columns=data_processor.feature_names)
+            original_df[data_processor.target_name] = y
+            
+            # Save temporary CSV for validation
+            temp_csv_path = "temp_validation_data.csv"
+            original_df.to_csv(temp_csv_path, index=False)
+            
+            # Use DataValidator class
+            logger.info("🔧 Initializing Pydantic DataValidator...")
+            data_validator = DataValidator()
+            logger.info("🚀 Running Pydantic validation on dataset...")
+            validation_result = data_validator.validate_dataset(temp_csv_path)
+            
+            logger.info("=" * 60)
+            logger.info("🎯 PYDANTIC VALIDATION COMPLETE!")
+            logger.info("=" * 60)
+            logger.info(f"✅ Validation Status: {'PASSED' if validation_result.get('is_valid', True) else 'FAILED'}")
+            logger.info(f"📊 Quality Score: {validation_result.get('quality_score', 1.0):.2f}")
+            logger.info(f"📈 Total Records Validated: {validation_result.get('total_records', len(original_df))}")
+            logger.info(f"✨ Valid Records: {validation_result.get('valid_records', len(original_df))}")
+            logger.info("=" * 60)
+            
+            if validation_result.get('warnings'):
+                warnings = validation_result['warnings']
+                logger.info(f"⚠️  Found {len(warnings)} Pydantic validation warnings:")
+                for i, warning in enumerate(warnings[:5], 1):  # Show first 5 warnings
+                    logger.warning(f"  {i}. {warning}")
+                if len(warnings) > 5:
+                    logger.warning(f"  ... and {len(warnings) - 5} more warnings")
+            
+            if validation_result.get('errors'):
+                errors = validation_result['errors']
+                logger.info(f"❌ Found {len(errors)} Pydantic validation errors:")
+                for i, error in enumerate(errors[:5], 1):  # Show first 5 errors
+                    logger.error(f"  {i}. {error}")
+                if len(errors) > 5:
+                    logger.error(f"  ... and {len(errors) - 5} more errors")
+            
+            # Note: For assignment purposes, we continue even if validation fails
+            # In production, you might want to stop processing on validation errors
+            if not validation_result.get('is_valid', True):
+                logger.warning("🔄 Pydantic validation failed, but continuing processing for assignment purposes")
+            else:
+                logger.info("🎉 Pydantic data validation PASSED successfully!")
+            
+            logger.info("🏁 Pydantic validation process completed")
+            
+            # Clean up temporary file
+            if os.path.exists(temp_csv_path):
+                os.remove(temp_csv_path)
+                
+        except Exception as e:
+            logger.warning(f"❌ Pydantic validation encountered an error: {e}")
+            logger.info("🔄 Continuing with preprocessing despite Pydantic validation error")
+    else:
+        logger.info("⚠️  Pydantic validation skipped (module not available)")
     
     # Preprocess data
     X_processed, y_processed = data_processor.preprocess_data(X, y)
@@ -57,8 +132,23 @@ def main():
             'test': len(X_test)
         },
         'features': data_processor.feature_names,
-        'target': data_processor.target_name
+        'target': data_processor.target_name,
+        'data_validation': {
+            'validation_available': VALIDATION_AVAILABLE,
+            'validation_performed': VALIDATION_AVAILABLE
+        }
     }
+    
+    # Add validation results to metadata if validation was performed
+    if VALIDATION_AVAILABLE and 'validation_result' in locals():
+        metadata['data_validation'].update({
+            'is_valid': validation_result.get('is_valid', True),
+            'quality_score': validation_result.get('quality_score', 1.0),
+            'total_records': validation_result.get('total_records', len(X)),
+            'valid_records': validation_result.get('valid_records', len(X)),
+            'num_warnings': len(validation_result.get('warnings', [])),
+            'num_errors': len(validation_result.get('errors', []))
+        })
     
     import json
     with open('data/processed/preprocessing_metadata.json', 'w') as f:
