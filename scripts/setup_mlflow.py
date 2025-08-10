@@ -12,6 +12,20 @@ import sys
 import logging
 from datetime import datetime
 from pathlib import Path
+import pandas as pd
+
+# Custom JSON encoder to handle Timestamp and other non-serializable objects
+class MLflowJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, (pd.Timestamp, pd._libs.tslibs.timestamps.Timestamp)):
+            return obj.isoformat() if pd.notna(obj) else None
+        elif hasattr(obj, 'isoformat'):  # datetime objects
+            return obj.isoformat()
+        elif pd.isna(obj):  # Handle NaN values
+            return None
+        elif isinstance(obj, (pd.Series, pd.DataFrame)):
+            return str(obj)  # Convert to string representation
+        return super().default(obj)
 
 # Constants for MLflow parameter and metric names
 PARAM_MODEL_TYPE = 'params.model_type'
@@ -67,7 +81,7 @@ def generate_experiment_summary(experiment_name):
         runs = mlflow.search_runs(experiment_ids=[experiment.experiment_id])
         
         summary = {
-            "experiment_id": experiment.experiment_id,
+            "experiment_id": str(experiment.experiment_id),
             "experiment_name": experiment_name,
             "total_runs": len(runs),
             "created_at": datetime.now().isoformat(),
@@ -77,24 +91,32 @@ def generate_experiment_summary(experiment_name):
         if len(runs) > 0:
             # Add recent runs summary
             for _, run in runs.head(10).iterrows():  # Last 10 runs
+                # Safely extract values and convert to JSON-serializable types
+                val_rmse = run.get(METRIC_VAL_RMSE)
+                val_r2 = run.get(METRIC_VAL_R2)
+                start_time = run.get('start_time')
+                
                 run_info = {
-                    "run_id": run['run_id'],
-                    "model_type": run.get(PARAM_MODEL_TYPE, 'unknown'),
-                    "val_rmse": run.get(METRIC_VAL_RMSE, None),
-                    "val_r2": run.get(METRIC_VAL_R2, None),
-                    "status": run.get('status', 'unknown'),
-                    "start_time": run.get('start_time', None)
+                    "run_id": str(run['run_id']),
+                    "model_type": str(run.get(PARAM_MODEL_TYPE, 'unknown')),
+                    "val_rmse": float(val_rmse) if pd.notna(val_rmse) else None,
+                    "val_r2": float(val_r2) if pd.notna(val_r2) else None,
+                    "status": str(run.get('status', 'unknown')),
+                    "start_time": start_time.isoformat() if pd.notna(start_time) else None
                 }
                 summary["runs"].append(run_info)
             
             # Find best model
             if METRIC_VAL_RMSE in runs.columns:
                 best_run = runs.loc[runs[METRIC_VAL_RMSE].idxmin()]
+                val_rmse = best_run.get(METRIC_VAL_RMSE)
+                val_r2 = best_run.get(METRIC_VAL_R2)
+                
                 summary["best_model"] = {
-                    "run_id": best_run['run_id'],
-                    "model_type": best_run.get(PARAM_MODEL_TYPE, 'unknown'),
-                    "rmse": float(best_run.get(METRIC_VAL_RMSE, 0)),
-                    "r2_score": float(best_run.get(METRIC_VAL_R2, 0)) if best_run.get(METRIC_VAL_R2) else None
+                    "run_id": str(best_run['run_id']),
+                    "model_type": str(best_run.get(PARAM_MODEL_TYPE, 'unknown')),
+                    "rmse": float(val_rmse) if pd.notna(val_rmse) else None,
+                    "r2_score": float(val_r2) if pd.notna(val_r2) else None
                 }
         
         return summary
@@ -114,25 +136,32 @@ def save_best_model_info(experiment_name, pipeline_run_number=None):
         
         if len(runs) > 0 and METRIC_VAL_RMSE in runs.columns:
             best_run = runs.loc[runs[METRIC_VAL_RMSE].idxmin()]
+            
+            # Safely extract values and convert to JSON-serializable types
+            val_rmse = best_run.get(METRIC_VAL_RMSE)
+            val_r2 = best_run.get(METRIC_VAL_R2)
+            
             best_model_info = {
-                'run_id': best_run['run_id'],
-                'model_type': best_run.get(PARAM_MODEL_TYPE, 'unknown'),
-                'rmse': float(best_run.get(METRIC_VAL_RMSE, 0)),
-                'r2_score': float(best_run.get(METRIC_VAL_R2, 0)) if best_run.get(METRIC_VAL_R2) else None,
-                'experiment_id': experiment.experiment_id,
+                'run_id': str(best_run['run_id']),
+                'model_type': str(best_run.get(PARAM_MODEL_TYPE, 'unknown')),
+                'rmse': float(val_rmse) if pd.notna(val_rmse) else None,
+                'r2_score': float(val_r2) if pd.notna(val_r2) else None,
+                'experiment_id': str(experiment.experiment_id),
                 'last_updated': datetime.now().isoformat(),
-                'pipeline_run': pipeline_run_number
+                'pipeline_run': str(pipeline_run_number) if pipeline_run_number else None
             }
             
             os.makedirs('deployment/models', exist_ok=True)
             with open('deployment/models/best_model_info.json', 'w') as f:
-                json.dump(best_model_info, f, indent=2)
+                json.dump(best_model_info, f, indent=2, cls=MLflowJSONEncoder)
             
             return best_model_info
         else:
             return None
             
     except Exception as e:
+        logging.getLogger(__name__).error(f"Failed to save best model info: {e}")
+        return None
         logging.error(f"Failed to save best model info: {e}")
         return None
 
@@ -194,7 +223,7 @@ def main():
         # Save experiment summary to file
         summary_file = 'mlflow_experiment_summary.json'
         with open(summary_file, 'w') as f:
-            json.dump(summary, f, indent=2)
+            json.dump(summary, f, indent=2, cls=MLflowJSONEncoder)
         logger.info(f"Experiment summary saved to {summary_file}")
         
         logger.info("MLflow setup and tracking completed successfully")
