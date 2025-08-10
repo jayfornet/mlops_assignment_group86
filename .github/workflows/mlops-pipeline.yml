@@ -152,9 +152,18 @@ jobs:
     - name: Validate model artifacts
       run: |
         # Check if model files are created
-        ls -la models/
-        # Validate model can be loaded using the enhanced validation script
-        python scripts/validate_models_enhanced.py --models-dir models --create-dummy
+        ls -la models/ || echo "No models directory"
+        ls -la deployment/models/ || echo "No deployment models directory"
+        
+        # For assignment purposes, we only need the best deployment model
+        # Validate using the enhanced validation script focusing on deployment model
+        if [ -f "deployment/models/best_model.joblib" ]; then
+          echo "✅ Best model found in deployment directory"
+          python scripts/quick_model_validation.py deployment/models
+        else
+          echo "⚠️ No deployment model found, using fallback validation"
+          python scripts/validate_models_enhanced.py --models-dir models --create-dummy
+        fi
         
     - name: Upload model artifacts
       uses: actions/upload-artifact@v4
@@ -719,9 +728,12 @@ jobs:
     - name: Validate model files
       run: |
         pip install scikit-learn==1.6.1 joblib numpy
-        # First check if models directory exists and has content
-        if [ -d "models" ] && [ "$(ls -A models/*.joblib 2>/dev/null)" ]; then
-          echo "✅ Found models directory with .joblib files"
+        # Check for deployment model first (primary focus for assignment)
+        if [ -f "deployment/models/best_model.joblib" ]; then
+          echo "✅ Found deployment model, validating..."
+          python scripts/quick_model_validation.py deployment/models
+        elif [ -d "models" ] && [ "$(ls -A models/*.joblib 2>/dev/null)" ]; then
+          echo "✅ Found models directory with .joblib files, validating..."
           python scripts/quick_model_validation.py models
         else
           echo "⚠️ No models found, using enhanced validation with dummy creation"

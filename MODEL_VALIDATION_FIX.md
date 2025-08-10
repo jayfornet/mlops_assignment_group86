@@ -8,6 +8,7 @@ The integration tests were failing during model validation with error code 118, 
 - Integration tests were running with scikit-learn 1.7.1  
 - This caused `InconsistentVersionWarning` and validation failures
 - The validation script was not properly handling warnings and exceptions
+- **For assignment purposes**: Only the `best_model.joblib` (deployment model) needs validation
 
 ## Fixes Applied
 
@@ -27,16 +28,18 @@ The integration tests were failing during model validation with error code 118, 
 ### 3. Quick Validation Script
 **File:** `scripts/quick_model_validation.py` (NEW)
 - Created lightweight validation script for integration tests
+- **Prioritizes deployment model (`best_model.joblib`) validation**
 - Suppresses warnings for clean output
 - Provides concise success/failure reporting
-- Better suited for CI/CD environments
+- Better suited for CI/CD environments and assignment requirements
 
 ### 4. Pipeline Updates
 **File:** `.github/workflows/mlops-pipeline.yml`
 - Updated MLflow persistence job to use pinned sklearn version
-- Modified integration test validation to use quick validation script
-- Added fallback mechanism if models directory is empty
+- Modified integration test validation to prioritize `deployment/models/best_model.joblib`
+- Added fallback mechanism if deployment model is not found
 - Ensured consistent sklearn version across all jobs
+- **Assignment focus**: Only validates the final deployment model
 
 ## Testing Results
 
