@@ -128,70 +128,7 @@ jobs:
     - name: Build monitoring image locally for testing
       run: |
         echo "🔨 Building monitoring stack image..."
-        
-        # Create a comprehensive monitoring Docker image
-        cat > Dockerfile.monitoring.full << 'EOF'
-        FROM alpine:3.18
-        
-        # Install necessary packages
-        RUN apk add --no-cache \
-            curl \
-            bash \
-            jq
-        
-        # Create directories
-        RUN mkdir -p /monitoring/prometheus \
-                     /monitoring/grafana/provisioning/datasources \
-                     /monitoring/grafana/provisioning/dashboards \
-                     /monitoring/grafana/dashboards
-        
-        # Copy monitoring configuration
-        COPY monitoring/prometheus.yml /monitoring/prometheus.yml
-        COPY monitoring/grafana/ /monitoring/grafana/
-        COPY docker-compose.monitoring.yml /docker-compose.monitoring.yml
-        
-        # Create startup script
-        RUN cat > /start-monitoring.sh << 'SCRIPT'
-        #!/bin/bash
-        echo "🚀 Starting MLOps Monitoring Stack..."
-        echo "📊 Prometheus will be available at: http://localhost:9090"
-        echo "📈 Grafana will be available at: http://localhost:3000"
-        echo "   Default credentials: admin/admin123"
-        echo ""
-        echo "🔧 Starting services..."
-        docker compose -f /docker-compose.monitoring.yml up -d
-        
-        echo "⏳ Waiting for services to start..."
-        sleep 30
-        
-        echo "✅ Monitoring stack started successfully!"
-        echo ""
-        echo "📋 Service Status:"
-        docker compose -f /docker-compose.monitoring.yml ps
-        echo ""
-        echo "🌐 Access URLs:"
-        echo "  - Prometheus: http://localhost:9090"
-        echo "  - Grafana: http://localhost:3000 (admin/admin123)"
-        echo "  - Node Exporter: http://localhost:9100"
-        echo "  - cAdvisor: http://localhost:8080"
-        echo ""
-        echo "🎯 Make sure your MLOps API is running on localhost:8000"
-        echo "   for monitoring to collect metrics!"
-        SCRIPT
-        
-        RUN chmod +x /start-monitoring.sh
-        
-        # Health check
-        HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-          CMD curl -f http://localhost:9090/-/healthy || exit 1
-        
-        WORKDIR /
-        
-        # Default command
-        CMD ["/start-monitoring.sh"]
-        EOF
-        
-        docker build -f Dockerfile.monitoring.full -t ${{ env.MONITORING_IMAGE_NAME }}:test .
+        docker build -f Dockerfile.monitoring -t ${{ env.MONITORING_IMAGE_NAME }}:test .
         
     - name: Test monitoring image
       run: |
@@ -207,7 +144,7 @@ jobs:
       uses: docker/build-push-action@v5
       with:
         context: .
-        file: Dockerfile.monitoring.full
+        file: Dockerfile.monitoring
         push: true
         tags: |
           ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.MONITORING_IMAGE_NAME }}:latest

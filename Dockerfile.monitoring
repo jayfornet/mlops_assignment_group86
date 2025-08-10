@@ -1,19 +1,42 @@
 # Multi-stage build for monitoring stack
-FROM alpine:3.18
+FROM alpine:3.19
 
-# Install Docker Compose
-RUN apk add --no-cache docker-compose curl
+# Install necessary packages (use http mirrors to avoid SSL issues)
+RUN sed -i 's/https/http/g' /etc/apk/repositories && \
+    apk update && \
+    apk add --no-cache bash curl jq
 
 # Copy monitoring configuration
 COPY monitoring/ /monitoring/
 COPY docker-compose.monitoring.yml /docker-compose.monitoring.yml
 
+# Create startup and health check scripts
+RUN printf '#!/bin/bash\n' > /start-monitoring.sh && \
+    printf 'echo "🚀 MLOps Monitoring Stack"\n' >> /start-monitoring.sh && \
+    printf 'echo "========================="\n' >> /start-monitoring.sh && \
+    printf 'echo "📊 Prometheus: http://localhost:9090"\n' >> /start-monitoring.sh && \
+    printf 'echo "📈 Grafana: http://localhost:3000 (admin/admin123)"\n' >> /start-monitoring.sh && \
+    printf 'echo "🖥️  Node Exporter: http://localhost:9100"\n' >> /start-monitoring.sh && \
+    printf 'echo "📦 cAdvisor: http://localhost:8080"\n' >> /start-monitoring.sh && \
+    printf 'echo ""\n' >> /start-monitoring.sh && \
+    printf 'echo "🔧 To start monitoring:"\n' >> /start-monitoring.sh && \
+    printf 'echo "docker compose -f docker-compose.monitoring.yml up -d"\n' >> /start-monitoring.sh && \
+    printf 'echo ""\n' >> /start-monitoring.sh && \
+    printf 'echo "🎯 Ensure your MLOps API runs on localhost:8000"\n' >> /start-monitoring.sh && \
+    chmod +x /start-monitoring.sh && \
+    printf '#!/bin/bash\n' > /health-check.sh && \
+    printf 'curl -f http://localhost:9090/-/healthy 2>/dev/null || exit 1\n' >> /health-check.sh && \
+    chmod +x /health-check.sh
+
 # Set working directory
 WORKDIR /
 
+# Expose monitoring ports for documentation
+EXPOSE 9090 3000 9100 8080
+
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:9090/-/healthy || exit 1
+  CMD /health-check.sh
 
-# Default command to start monitoring stack
-CMD ["docker-compose", "-f", "docker-compose.monitoring.yml", "up", "-d"]
+# Default command shows monitoring information
+CMD ["/start-monitoring.sh"]
