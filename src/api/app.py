@@ -38,6 +38,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Import custom logging middleware
+try:
+    from .middleware import setup_request_logging_middleware
+    from .request_logger import request_logger
+except ImportError:
+    # Fallback for direct execution
+    import sys
+    import os
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    from middleware import setup_request_logging_middleware
+    from request_logger import request_logger
+
 # Prometheus metrics
 PREDICTION_COUNTER = Counter('predictions_total', 'Total number of predictions made')
 PREDICTION_HISTOGRAM = Histogram('prediction_duration_seconds', 'Time spent on predictions')
@@ -82,6 +94,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add request/response logging middleware
+setup_request_logging_middleware(app)
 
 
 class HousingInput(BaseModel):
@@ -679,6 +694,95 @@ async def get_recent_predictions(limit: int = 10):
     except Exception as e:
         logger.error(f"Error fetching recent predictions: {str(e)}")
         raise HTTPException(status_code=500, detail="Error fetching predictions")
+
+
+@app.get("/logs/requests")
+async def get_recent_requests(limit: int = 50):
+    """Get recent API requests and responses."""
+    try:
+        requests = request_logger.get_recent_requests(limit)
+        return {
+            "requests": requests,
+            "total": len(requests),
+            "limit": limit
+        }
+    except Exception as e:
+        logger.error(f"Error fetching recent requests: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error fetching requests")
+
+
+@app.get("/logs/stats")
+async def get_request_stats(hours: int = 24):
+    """Get API usage statistics for the specified time period."""
+    try:
+        stats = request_logger.get_request_stats(hours)
+        return stats
+    except Exception as e:
+        logger.error(f"Error fetching request statistics: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error fetching statistics")
+
+
+@app.get("/logs/download")
+async def download_request_logs(format: str = "json", hours: int = 24):
+    """
+    Download request logs in specified format.
+    
+    Args:
+        format: Output format (json, csv, txt)
+        hours: Number of hours to look back
+    """
+    try:
+        requests = request_logger.get_recent_requests(limit=1000)
+        
+        # Filter by time period
+        from datetime import datetime, timedelta
+        threshold = datetime.now() - timedelta(hours=hours)
+        
+        filtered_requests = []
+        for req in requests:
+            try:
+                req_time = datetime.fromisoformat(req['request_timestamp'])
+                if req_time >= threshold:
+                    filtered_requests.append(req)
+            except:
+                continue
+        
+        if format.lower() == "csv":
+            import csv
+            import io
+            
+            output = io.StringIO()
+            if filtered_requests:
+                writer = csv.DictWriter(output, fieldnames=filtered_requests[0].keys())
+                writer.writeheader()
+                writer.writerows(filtered_requests)
+            
+            response = Response(content=output.getvalue(), media_type="text/csv")
+            response.headers["Content-Disposition"] = f"attachment; filename=api_logs_{hours}h.csv"
+            return response
+            
+        elif format.lower() == "txt":
+            lines = []
+            for req in filtered_requests:
+                line = f"{req.get('request_timestamp', 'N/A')} | {req.get('method', 'N/A')} | {req.get('path', 'N/A')} | {req.get('status_code', 'N/A')} | {req.get('processing_time_ms', 'N/A')}ms | {req.get('client_ip', 'N/A')}"
+                lines.append(line)
+            
+            content = "\n".join(lines)
+            response = Response(content=content, media_type="text/plain")
+            response.headers["Content-Disposition"] = f"attachment; filename=api_logs_{hours}h.txt"
+            return response
+            
+        else:  # JSON format
+            response = Response(
+                content=json.dumps(filtered_requests, indent=2, ensure_ascii=False),
+                media_type="application/json"
+            )
+            response.headers["Content-Disposition"] = f"attachment; filename=api_logs_{hours}h.json"
+            return response
+            
+    except Exception as e:
+        logger.error(f"Error downloading request logs: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error downloading logs")
 
 
 if __name__ == "__main__":
