@@ -1,0 +1,550 @@
+name: MLOps Monitoring Pipeline - Prometheus & Grafana
+
+# This workflow handles monitoring stack changes only
+# Main MLOps pipeline changes trigger the separate mlops-pipeline.yml workflow
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'monitoring/**'
+      - 'docker-compose.monitoring.yml'
+      - 'Dockerfile.monitoring'
+      - '.github/workflows/monitoring-pipeline.yml'
+      - 'scripts/setup_monitoring.py'
+      - 'scripts/load_test_monitoring.py'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'monitoring/**'
+      - 'docker-compose.monitoring.yml'
+      - 'Dockerfile.monitoring'
+      - 'scripts/setup_monitoring.py'
+      - 'scripts/load_test_monitoring.py'
+  workflow_dispatch:  # Allow manual triggers
+
+# Prevent multiple monitoring builds
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  MONITORING_IMAGE_NAME: housing-prediction-monitoring
+  DOCKER_REGISTRY: docker.io
+  PYTHON_VERSION: 3.9
+
+jobs:
+  # Build and Test Monitoring Configuration
+  test-monitoring-config:
+    runs-on: ubuntu-latest
+    name: Test Monitoring Configuration
+    timeout-minutes: 10
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Validate Prometheus Configuration
+      run: |
+        # Install Prometheus config checker
+        wget https://github.com/prometheus/prometheus/releases/download/v2.47.0/prometheus-2.47.0.linux-amd64.tar.gz
+        tar xzf prometheus-2.47.0.linux-amd64.tar.gz
+        
+        # Check Prometheus config syntax
+        echo "🔍 Validating Prometheus configuration..."
+        ./prometheus-2.47.0.linux-amd64/promtool check config monitoring/prometheus.yml
+        echo "✅ Prometheus configuration is valid"
+        
+    - name: Validate Docker Compose Configuration
+      run: |
+        echo "🔍 Validating Docker Compose configuration..."
+        docker-compose -f docker-compose.monitoring.yml config
+        echo "✅ Docker Compose configuration is valid"
+        
+    - name: Validate Grafana Configuration
+      run: |
+        echo "🔍 Checking Grafana configuration files..."
+        
+        # Check if required files exist
+        if [ ! -f "monitoring/grafana/provisioning/datasources/prometheus.yml" ]; then
+          echo "❌ Missing Grafana datasource configuration"
+          exit 1
+        fi
+        
+        if [ ! -f "monitoring/grafana/provisioning/dashboards/dashboard.yml" ]; then
+          echo "❌ Missing Grafana dashboard configuration"
+          exit 1
+        fi
+        
+        if [ ! -f "monitoring/grafana/dashboards/mlops-monitoring.json" ]; then
+          echo "❌ Missing MLOps dashboard"
+          exit 1
+        fi
+        
+        echo "✅ All Grafana configuration files present"
+        
+        # Validate JSON dashboard
+        echo "🔍 Validating dashboard JSON..."
+        python -m json.tool monitoring/grafana/dashboards/mlops-monitoring.json > /dev/null
+        echo "✅ Dashboard JSON is valid"
+
+  # Build Monitoring Docker Image
+  build-monitoring:
+    runs-on: ubuntu-latest
+    name: Build Monitoring Stack
+    needs: [test-monitoring-config]
+    timeout-minutes: 15
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+        
+    - name: Build monitoring image locally for testing
+      run: |
+        echo "🔨 Building monitoring stack image..."
+        
+        # Create a comprehensive monitoring Docker image
+        cat > Dockerfile.monitoring.full << 'EOF'
+        FROM alpine:3.18
+        
+        # Install necessary packages
+        RUN apk add --no-cache \
+            docker-compose \
+            curl \
+            bash \
+            jq
+        
+        # Create directories
+        RUN mkdir -p /monitoring/prometheus \
+                     /monitoring/grafana/provisioning/datasources \
+                     /monitoring/grafana/provisioning/dashboards \
+                     /monitoring/grafana/dashboards
+        
+        # Copy monitoring configuration
+        COPY monitoring/prometheus.yml /monitoring/prometheus.yml
+        COPY monitoring/grafana/ /monitoring/grafana/
+        COPY docker-compose.monitoring.yml /docker-compose.monitoring.yml
+        
+        # Create startup script
+        RUN cat > /start-monitoring.sh << 'SCRIPT'
+        #!/bin/bash
+        echo "🚀 Starting MLOps Monitoring Stack..."
+        echo "📊 Prometheus will be available at: http://localhost:9090"
+        echo "📈 Grafana will be available at: http://localhost:3000"
+        echo "   Default credentials: admin/admin123"
+        echo ""
+        echo "🔧 Starting services..."
+        docker-compose -f /docker-compose.monitoring.yml up -d
+        
+        echo "⏳ Waiting for services to start..."
+        sleep 30
+        
+        echo "✅ Monitoring stack started successfully!"
+        echo ""
+        echo "📋 Service Status:"
+        docker-compose -f /docker-compose.monitoring.yml ps
+        echo ""
+        echo "🌐 Access URLs:"
+        echo "  - Prometheus: http://localhost:9090"
+        echo "  - Grafana: http://localhost:3000 (admin/admin123)"
+        echo "  - Node Exporter: http://localhost:9100"
+        echo "  - cAdvisor: http://localhost:8080"
+        echo ""
+        echo "🎯 Make sure your MLOps API is running on localhost:8000"
+        echo "   for monitoring to collect metrics!"
+        SCRIPT
+        
+        RUN chmod +x /start-monitoring.sh
+        
+        # Health check
+        HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+          CMD curl -f http://localhost:9090/-/healthy || exit 1
+        
+        WORKDIR /
+        
+        # Default command
+        CMD ["/start-monitoring.sh"]
+        EOF
+        
+        docker build -f Dockerfile.monitoring.full -t ${{ env.MONITORING_IMAGE_NAME }}:test .
+        
+    - name: Test monitoring image
+      run: |
+        echo "🧪 Testing monitoring image..."
+        
+        # Test that the image runs and contains expected files
+        docker run --rm ${{ env.MONITORING_IMAGE_NAME }}:test ls -la /monitoring/
+        docker run --rm ${{ env.MONITORING_IMAGE_NAME }}:test cat /monitoring/prometheus.yml | head -10
+        
+        echo "✅ Monitoring image test passed"
+        
+    - name: Build and push monitoring image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: Dockerfile.monitoring.full
+        push: true
+        tags: |
+          ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.MONITORING_IMAGE_NAME }}:latest
+          ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.MONITORING_IMAGE_NAME }}:${{ github.sha }}
+        platforms: linux/amd64
+        cache-from: type=registry,ref=${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.MONITORING_IMAGE_NAME }}:buildcache
+        cache-to: type=registry,ref=${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.MONITORING_IMAGE_NAME }}:buildcache,mode=max
+
+  # Integration Test with API
+  test-monitoring-integration:
+    runs-on: ubuntu-latest
+    name: Test Monitoring Integration
+    needs: [build-monitoring]
+    timeout-minutes: 20
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: Install dependencies
+      run: |
+        pip install requests prometheus-client
+        
+    - name: Start monitoring stack
+      run: |
+        echo "🚀 Starting monitoring stack for integration testing..."
+        docker-compose -f docker-compose.monitoring.yml up -d
+        
+        echo "⏳ Waiting for services to be ready..."
+        sleep 60
+        
+        echo "📋 Service status:"
+        docker-compose -f docker-compose.monitoring.yml ps
+        
+    - name: Test Prometheus metrics collection
+      run: |
+        echo "🔍 Testing Prometheus..."
+        
+        # Check if Prometheus is running
+        curl -f http://localhost:9090/-/healthy || {
+          echo "❌ Prometheus health check failed"
+          docker-compose -f docker-compose.monitoring.yml logs prometheus
+          exit 1
+        }
+        
+        # Check if targets are configured
+        curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[].health' || {
+          echo "❌ Failed to get Prometheus targets"
+          exit 1
+        }
+        
+        echo "✅ Prometheus is working"
+        
+    - name: Test Grafana setup
+      run: |
+        echo "🔍 Testing Grafana..."
+        
+        # Wait a bit more for Grafana
+        sleep 30
+        
+        # Check if Grafana is running
+        curl -f http://localhost:3000/api/health || {
+          echo "❌ Grafana health check failed"
+          docker-compose -f docker-compose.monitoring.yml logs grafana
+          exit 1
+        }
+        
+        echo "✅ Grafana is working"
+        
+    - name: Create synthetic API metrics
+      run: |
+        echo "🧪 Creating synthetic metrics to test monitoring..."
+        
+        # Create a simple script to generate synthetic metrics
+        cat > generate_metrics.py << 'EOF'
+        import requests
+        import time
+        import random
+        from prometheus_client import Counter, Histogram, CollectorRegistry, generate_latest, start_http_server
+        
+        # Create custom metrics
+        registry = CollectorRegistry()
+        predictions_counter = Counter('predictions_total', 'Total predictions', registry=registry)
+        prediction_histogram = Histogram('prediction_duration_seconds', 'Prediction duration', registry=registry)
+        
+        # Start metrics server
+        start_http_server(8001, registry=registry)
+        
+        print("📊 Generating synthetic metrics...")
+        for i in range(10):
+            with prediction_histogram.time():
+                predictions_counter.inc()
+                time.sleep(random.uniform(0.1, 0.5))
+            print(f"Generated prediction {i+1}/10")
+        
+        print("✅ Synthetic metrics generated")
+        time.sleep(5)  # Keep server running briefly
+        EOF
+        
+        python generate_metrics.py &
+        METRICS_PID=$!
+        
+        sleep 10
+        
+        # Check if synthetic metrics are accessible
+        curl -f http://localhost:8001/metrics | grep predictions_total || {
+          echo "❌ Synthetic metrics not accessible"
+          kill $METRICS_PID 2>/dev/null || true
+          exit 1
+        }
+        
+        kill $METRICS_PID 2>/dev/null || true
+        echo "✅ Synthetic metrics test passed"
+        
+    - name: Cleanup
+      if: always()
+      run: |
+        echo "🧹 Cleaning up monitoring stack..."
+        docker-compose -f docker-compose.monitoring.yml down -v || true
+
+  # Generate Monitoring Documentation
+  generate-monitoring-docs:
+    runs-on: ubuntu-latest
+    name: Generate Monitoring Documentation
+    needs: [test-monitoring-integration]
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Generate monitoring documentation
+      run: |
+        echo "📝 Generating monitoring setup documentation..."
+        
+        cat > MONITORING.md << 'EOF'
+        # MLOps Monitoring Setup Guide
+        
+        ## 🎯 Overview
+        This monitoring stack provides comprehensive observability for the California Housing Prediction MLOps pipeline using Prometheus and Grafana.
+        
+        ## 🚀 Quick Start
+        
+        ### Prerequisites
+        - Docker and Docker Compose installed
+        - MLOps API running on localhost:8000
+        
+        ### 1. Pull Monitoring Image
+        ```bash
+        docker pull ${{ secrets.DOCKER_USERNAME }}/housing-prediction-monitoring:latest
+        ```
+        
+        ### 2. Start Monitoring Stack
+        ```bash
+        docker-compose -f docker-compose.monitoring.yml up -d
+        ```
+        
+        ### 3. Access Dashboards
+        - **Prometheus**: http://localhost:9090
+        - **Grafana**: http://localhost:3000 (admin/admin123)
+        - **Node Exporter**: http://localhost:9100/metrics
+        - **cAdvisor**: http://localhost:8080
+        
+        ## 📊 Monitoring Components
+        
+        ### Prometheus (Port 9090)
+        - Metrics collection and storage
+        - Scrapes API metrics every 5 seconds
+        - System and container metrics collection
+        - Alert rule evaluation
+        
+        ### Grafana (Port 3000)
+        - Visualization and dashboards
+        - Pre-configured MLOps dashboard
+        - Real-time monitoring views
+        - Alert notifications
+        
+        ### Node Exporter (Port 9100)
+        - System-level metrics
+        - CPU, memory, disk, network stats
+        - Hardware monitoring
+        
+        ### cAdvisor (Port 8080)
+        - Container metrics
+        - Docker container performance
+        - Resource usage tracking
+        
+        ## 📈 Available Metrics
+        
+        ### API Metrics (from localhost:8000/metrics)
+        - `predictions_total` - Total number of predictions made
+        - `prediction_duration_seconds` - Response time histogram
+        - `prediction_errors_total` - Total prediction errors
+        
+        ### System Metrics
+        - CPU usage and load average
+        - Memory usage and availability  
+        - Disk I/O and space usage
+        - Network traffic
+        
+        ### Container Metrics
+        - Container CPU and memory usage
+        - Container network and disk I/O
+        - Container restart counts
+        
+        ## 🎨 Grafana Dashboard
+        The pre-configured dashboard includes:
+        - Prediction request rate
+        - Response time percentiles
+        - Error rates and counts
+        - System resource usage
+        - API health status
+        
+        ## 🔧 Configuration
+        
+        ### Prometheus Config
+        - Location: `monitoring/prometheus.yml`
+        - Scrape interval: 5s for API, 15s for system
+        - Targets: API, Node Exporter, cAdvisor
+        
+        ### Grafana Config
+        - Datasource: Auto-configured Prometheus
+        - Dashboard: `monitoring/grafana/dashboards/mlops-monitoring.json`
+        - Default credentials: admin/admin123
+        
+        ## 📋 Monitoring Checklist
+        
+        ### For Local Development
+        - [ ] Start MLOps API on port 8000
+        - [ ] Start monitoring stack
+        - [ ] Verify Prometheus targets are UP
+        - [ ] Access Grafana dashboard
+        - [ ] Make test predictions to generate metrics
+        
+        ### For Production
+        - [ ] Configure external storage for metrics
+        - [ ] Set up alerting rules
+        - [ ] Configure notification channels
+        - [ ] Implement log aggregation
+        - [ ] Set up backup for dashboards
+        
+        ## 🚨 Troubleshooting
+        
+        ### Common Issues
+        1. **Prometheus can't reach API**
+           - Check if API is running on localhost:8000
+           - Verify Docker network connectivity
+           - Check `/metrics` endpoint accessibility
+        
+        2. **Grafana dashboard empty**
+           - Wait 1-2 minutes for data collection
+           - Check Prometheus data source connection
+           - Verify time range in dashboard
+        
+        3. **Missing metrics**
+           - Check API `/metrics` endpoint
+           - Verify Prometheus scrape configuration
+           - Check for firewall blocking
+        
+        ### Logs
+        ```bash
+        # View all monitoring logs
+        docker-compose -f docker-compose.monitoring.yml logs
+        
+        # View specific service logs
+        docker-compose -f docker-compose.monitoring.yml logs prometheus
+        docker-compose -f docker-compose.monitoring.yml logs grafana
+        ```
+        
+        ## 🎯 Assignment Usage
+        
+        ### Running Both Images Locally
+        1. **Start MLOps API (Port 8000)**:
+           ```bash
+           docker run -d --name housing-api -p 8000:8000 ${{ secrets.DOCKER_USERNAME }}/housing-prediction-api:latest
+           ```
+        
+        2. **Start Monitoring Stack**:
+           ```bash
+           docker-compose -f docker-compose.monitoring.yml up -d
+           ```
+        
+        3. **Access Services**:
+           - API: http://localhost:8000
+           - Prometheus: http://localhost:9090
+           - Grafana: http://localhost:3000
+        
+        4. **Make Predictions & Monitor**:
+           ```bash
+           # Make predictions to generate metrics
+           curl -X POST "http://localhost:8000/predict" \
+                -H "Content-Type: application/json" \
+                -d '{"MedInc": 8.3252, "HouseAge": 41.0, "AveRooms": 6.984, "AveBedrms": 1.023, "Population": 322.0, "AveOccup": 2.555, "Latitude": 37.88, "Longitude": -122.23}'
+           
+           # View metrics in Grafana dashboard
+           # Go to http://localhost:3000 and login with admin/admin123
+           ```
+        
+        ## 🔗 Useful URLs
+        - **API Health**: http://localhost:8000/health
+        - **API Metrics**: http://localhost:8000/metrics
+        - **API Docs**: http://localhost:8000/docs
+        - **Prometheus**: http://localhost:9090
+        - **Grafana**: http://localhost:3000
+        - **System Metrics**: http://localhost:9100/metrics
+        - **Container Metrics**: http://localhost:8080/metrics
+        
+        ---
+        
+        📊 **Happy Monitoring!** 🚀
+        EOF
+        
+        echo "✅ Monitoring documentation generated"
+        
+    - name: Upload monitoring documentation
+      uses: actions/upload-artifact@v4
+      with:
+        name: monitoring-docs
+        path: MONITORING.md
+        retention-days: 30
+
+  # Deploy Success Notification
+  deploy-notification:
+    runs-on: ubuntu-latest
+    name: Monitoring Deployment Notification
+    needs: [build-monitoring, test-monitoring-integration, generate-monitoring-docs]
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Deploy success notification
+      run: |
+        echo "🎉 Monitoring pipeline deployment successful!"
+        echo ""
+        echo "📋 Deployment Summary:"
+        echo "✅ Monitoring configuration validated"
+        echo "✅ Docker image built and pushed"
+        echo "✅ Integration tests passed"
+        echo "✅ Documentation generated"
+        echo ""
+        echo "🚀 Ready for local deployment!"
+        echo ""
+        echo "📖 Quick Start Commands:"
+        echo "1. docker pull ${{ secrets.DOCKER_USERNAME }}/housing-prediction-monitoring:latest"
+        echo "2. docker-compose -f docker-compose.monitoring.yml up -d"
+        echo "3. Open http://localhost:3000 (Grafana) and http://localhost:9090 (Prometheus)"
+        echo ""
+        echo "🎯 Don't forget to start your MLOps API on port 8000 for monitoring!"

@@ -1,10 +1,31 @@
 name: MLOps Pipeline - California Housing Prediction
 
+# This workflow handles the main MLOps pipeline (data, models, API)
+# Monitoring-related changes trigger the separate monitoring-pipeline.yml workflow
+
 on:
   push:
     branches: [ main, develop ]
+    paths-ignore:
+      - 'monitoring/**'
+      - 'docker-compose.monitoring.yml'
+      - 'Dockerfile.monitoring*'
+      - '.github/workflows/monitoring-pipeline.yml'
+      - 'scripts/setup_monitoring.py'
+      - 'scripts/load_test_monitoring.py'
+      - 'MONITORING.md'
+      - 'ASSIGNMENT_INSTRUCTIONS.md'
   pull_request:
     branches: [ main ]
+    paths-ignore:
+      - 'monitoring/**'
+      - 'docker-compose.monitoring.yml'
+      - 'Dockerfile.monitoring*'
+      - '.github/workflows/monitoring-pipeline.yml'
+      - 'scripts/setup_monitoring.py'
+      - 'scripts/load_test_monitoring.py'
+      - 'MONITORING.md'
+      - 'ASSIGNMENT_INSTRUCTIONS.md'
 
 # Prevent multiple workflow runs on the same branch
 concurrency:

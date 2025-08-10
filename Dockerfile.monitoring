@@ -1,0 +1,19 @@
+# Multi-stage build for monitoring stack
+FROM alpine:3.18
+
+# Install Docker Compose
+RUN apk add --no-cache docker-compose curl
+
+# Copy monitoring configuration
+COPY monitoring/ /monitoring/
+COPY docker-compose.monitoring.yml /docker-compose.monitoring.yml
+
+# Set working directory
+WORKDIR /
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:9090/-/healthy || exit 1
+
+# Default command to start monitoring stack
+CMD ["docker-compose", "-f", "docker-compose.monitoring.yml", "up", "-d"]
