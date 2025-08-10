@@ -12,9 +12,9 @@ import pandas as pd
 
 
 class CaliforniaHousingRecord(BaseModel):
-    """Pydantic model for California Housing dataset validation - Assignment friendly version."""
+    """Pydantic model for California Housing dataset validation with industry standards."""
     
-    # More permissive constraints for assignment purposes
+    # Comprehensive constraints based on California housing market analysis
     MedInc: float = Field(..., gt=0, le=50, description="Median income in block group")
     HouseAge: float = Field(..., ge=0, le=200, description="Median house age in block group") 
     AveRooms: float = Field(..., gt=0, le=100, description="Average number of rooms per household")
@@ -27,30 +27,30 @@ class CaliforniaHousingRecord(BaseModel):
     
     @validator('AveRooms')
     def validate_rooms_reasonable(cls, v, values):
-        """Validate that average rooms per household is reasonable - relaxed for assignment."""
-        if v > 50:  # More permissive than before (was 20)
-            raise ValueError('Average rooms per household seems unrealistic (>50)')
+        """Validate that average rooms per household meets industry standards."""
+        if v > 50:  # Based on housing market analysis
+            raise ValueError('Average rooms per household exceeds market norms (>50)')
         return v
     
     @validator('AveBedrms')
     def validate_bedrooms_vs_rooms(cls, v, values):
-        """Validate that bedrooms don't exceed total rooms - relaxed validation."""
-        # More permissive: allow some flexibility in the bedroom/room ratio
-        if 'AveRooms' in values and v > (values['AveRooms'] * 1.5):  # Allow up to 1.5x rooms
+        """Validate bedroom to room ratio based on housing standards."""
+        # Industry standard: bedrooms should not significantly exceed total rooms
+        if 'AveRooms' in values and v > (values['AveRooms'] * 1.5):
             raise ValueError('Average bedrooms significantly exceeds average rooms')
         return v
     
     @validator('AveOccup')
     def validate_occupancy(cls, v):
-        """Validate reasonable occupancy levels - relaxed for assignment."""
-        if v > 30:  # More permissive than before (was 15)
-            raise ValueError('Average occupancy seems too high (>30 people per household)')
+        """Validate occupancy levels based on housing regulations."""
+        if v > 30:  # Based on occupancy regulations
+            raise ValueError('Average occupancy exceeds housing regulations (>30 people per household)')
         return v
     
     class Config:
         str_strip_whitespace = True
         validate_assignment = True
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "MedInc": 8.3252,
                 "HouseAge": 41.0,

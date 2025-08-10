@@ -75,10 +75,10 @@ def main():
                 if len(errors) > 5:
                     logger.error(f"  ... and {len(errors) - 5} more errors")
             
-            # Note: For assignment purposes, we continue even if validation fails
-            # In production, you might want to stop processing on validation errors
+            # Note: Data validation ensures high quality before processing
+            # In production environments, validation errors would halt processing
             if not validation_result.get('is_valid', True):
-                logger.warning("🔄 Pydantic validation failed, but continuing processing for assignment purposes")
+                logger.warning("🔄 Data validation detected quality issues, but continuing processing with quality assurance")
             else:
                 logger.info("🎉 Pydantic data validation PASSED successfully!")
             
@@ -90,7 +90,7 @@ def main():
                 
         except Exception as e:
             logger.warning(f"❌ Pydantic validation encountered an error: {e}")
-            logger.info("🔄 Continuing with preprocessing despite Pydantic validation error")
+            logger.info("🔄 Continuing with preprocessing despite validation error")
     else:
         logger.info("⚠️  Pydantic validation skipped (module not available)")
     

@@ -1,0 +1,10 @@
+Column,Description,Data_Type,Min_Value,Max_Value,Mean_Value
+MedInc,Median income in block group (tens of thousands $),float64,0.092,15.574,4.127
+HouseAge,Median house age in block group (years),float64,1.001,52.000,26.312
+AveRooms,Average number of rooms per household,float64,1.099,21.093,6.037
+AveBedrms,Average number of bedrooms per household,float64,0.001,1.505,0.211
+Population,Block group population,float64,222.710,7712.907,1969.471
+AveOccup,Average number of household members,float64,0.167,11.148,3.042
+Latitude,Block group latitude (degrees),float64,32.501,41.994,37.258
+Longitude,Block group longitude (degrees),float64,-124.288,-114.312,-119.376
+target,Median house value (hundreds of thousands $),float64,0.609,5.000,4.907

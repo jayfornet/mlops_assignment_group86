@@ -248,7 +248,7 @@ jobs:
         ls -la models/ || echo "No models directory"
         ls -la deployment/models/ || echo "No deployment models directory"
         
-        # For assignment purposes, we only need the best deployment model
+        # Production-focused deployment strategy with best model selection
         # Validate using the enhanced validation script focusing on deployment model
         if [ -f "deployment/models/best_model.joblib" ]; then
           echo "✅ Best model found in deployment directory"
@@ -821,7 +821,7 @@ jobs:
     - name: Validate model files
       run: |
         pip install scikit-learn==1.6.1 joblib numpy
-        # Check for deployment model first (primary focus for assignment)
+        # Check for deployment model first (primary production focus)
         if [ -f "deployment/models/best_model.joblib" ]; then
           echo "✅ Found deployment model, validating..."
           python scripts/quick_model_validation.py deployment/models
