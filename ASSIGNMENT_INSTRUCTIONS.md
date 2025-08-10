@@ -43,7 +43,7 @@ curl http://localhost:8000/health
 python scripts/setup_monitoring.py setup
 
 # Or manually with Docker Compose
-docker-compose -f docker-compose.monitoring.yml up -d
+docker compose -f docker-compose.monitoring.yml up -d
 ```
 
 ### Step 3: Access Monitoring Services
@@ -191,7 +191,7 @@ python scripts/setup_monitoring.py test
 
 ```powershell
 # Stop all containers
-docker-compose -f docker-compose.monitoring.yml down
+docker compose -f docker-compose.monitoring.yml down
 docker stop housing-api
 docker rm housing-api
 

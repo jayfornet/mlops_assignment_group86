@@ -33,6 +33,11 @@ class MonitoringSetup:
     def check_docker_compose(self):
         """Check if Docker Compose is available."""
         try:
+            # Try modern docker compose first
+            result = subprocess.run(['docker', 'compose', 'version'], capture_output=True, text=True)
+            if result.returncode == 0:
+                return True
+            # Fallback to legacy docker-compose
             result = subprocess.run(['docker-compose', '--version'], capture_output=True, text=True)
             return result.returncode == 0
         except FileNotFoundError:
@@ -55,10 +60,15 @@ class MonitoringSetup:
             return False
         
         try:
-            # Start the stack
-            result = subprocess.run([
-                'docker-compose', '-f', 'docker-compose.monitoring.yml', 'up', '-d'
-            ], capture_output=True, text=True)
+            # Try modern docker compose first, fallback to legacy
+            try:
+                result = subprocess.run([
+                    'docker', 'compose', '-f', 'docker-compose.monitoring.yml', 'up', '-d'
+                ], capture_output=True, text=True)
+            except FileNotFoundError:
+                result = subprocess.run([
+                    'docker-compose', '-f', 'docker-compose.monitoring.yml', 'up', '-d'
+                ], capture_output=True, text=True)
             
             if result.returncode != 0:
                 print(f"❌ Failed to start monitoring stack: {result.stderr}")
@@ -76,9 +86,15 @@ class MonitoringSetup:
         print("🛑 Stopping monitoring stack...")
         
         try:
-            result = subprocess.run([
-                'docker-compose', '-f', 'docker-compose.monitoring.yml', 'down'
-            ], capture_output=True, text=True)
+            # Try modern docker compose first, fallback to legacy
+            try:
+                result = subprocess.run([
+                    'docker', 'compose', '-f', 'docker-compose.monitoring.yml', 'down'
+                ], capture_output=True, text=True)
+            except FileNotFoundError:
+                result = subprocess.run([
+                    'docker-compose', '-f', 'docker-compose.monitoring.yml', 'down'
+                ], capture_output=True, text=True)
             
             if result.returncode == 0:
                 print("✅ Monitoring stack stopped successfully!")
