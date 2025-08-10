@@ -416,7 +416,7 @@ jobs:
     - name: Install MLflow dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install mlflow pandas numpy scikit-learn
+        pip install mlflow pandas numpy scikit-learn==1.6.1
         
     - name: Create necessary directories
       run: |
@@ -718,8 +718,15 @@ jobs:
         
     - name: Validate model files
       run: |
-        pip install scikit-learn joblib
-        python scripts/validate_models_enhanced.py --models-dir models --create-dummy
+        pip install scikit-learn==1.6.1 joblib numpy
+        # First check if models directory exists and has content
+        if [ -d "models" ] && [ "$(ls -A models/*.joblib 2>/dev/null)" ]; then
+          echo "✅ Found models directory with .joblib files"
+          python scripts/quick_model_validation.py models
+        else
+          echo "⚠️ No models found, using enhanced validation with dummy creation"
+          python scripts/validate_models_enhanced.py --models-dir models --create-dummy
+        fi
         
     - name: Pull Docker image
       run: |

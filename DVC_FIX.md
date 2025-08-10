@@ -10,6 +10,7 @@ This happened because DVC cannot track files that are already being tracked by G
 
 ## Solution
 1. **Updated Pipeline**: Modified the DVC tracking step in `.github/workflows/mlops-pipeline.yml` to:
+   - Check if files are already tracked by DVC (`.dvc` files exist)
    - Check if files are already tracked by Git using `git ls-files --error-unmatch`
    - Remove files from Git tracking first using `git rm --cached`
    - Then add them to DVC tracking
@@ -38,5 +39,34 @@ This happened because DVC cannot track files that are already being tracked by G
 - ✅ Proper separation of code (Git) and data (DVC)
 - ✅ Pipeline automatically handles existing files
 
+# MLflow JSON Serialization Fix
+
+## Problem
+The MLflow setup was failing with:
+```
+ERROR: MLflow setup failed with error: Object of type Timestamp is not JSON serializable
+```
+
+This happened because pandas Timestamp objects in MLflow runs cannot be directly serialized to JSON.
+
+## Solution
+1. **Custom JSON Encoder**: Added `MLflowJSONEncoder` class to handle:
+   - Pandas Timestamp objects → ISO format strings
+   - NaN values → None
+   - Other non-serializable objects → String representations
+
+2. **Updated Functions**: Fixed `save_best_model_info()` and `generate_experiment_summary()` to:
+   - Safely extract values from pandas DataFrames
+   - Convert to JSON-serializable types
+   - Use custom encoder for JSON operations
+
+3. **Better Error Handling**: Added proper exception handling and type conversion
+
+## How It Works Now
+- ✅ All datetime objects are converted to ISO format strings
+- ✅ NaN values are converted to None
+- ✅ All JSON operations use the custom encoder
+- ✅ Robust type checking and conversion
+
 ## Next Steps
-The pipeline should now run successfully through the DVC step without errors.
+Both DVC and MLflow issues are now resolved. The pipeline should run successfully without errors.

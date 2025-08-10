@@ -1,5 +1,7 @@
 # Core ML Libraries
-scikit-learn>=1.2.0
+# Note: scikit-learn is pinned to 1.6.1 to avoid version mismatch issues during model loading
+# in different environments (training vs validation). This prevents InconsistentVersionWarning.
+scikit-learn==1.6.1  # Pin to avoid version mismatch during model loading
 pandas>=1.5.0
 numpy>=1.21.0
 
