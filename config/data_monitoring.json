@@ -1,0 +1,151 @@
+{
+  "data_sources": {
+    "california_housing": {
+      "file_path": "data/california_housing.csv",
+      "check_interval": 3600,
+      "quality_checks": true,
+      "auto_trigger": true,
+      "description": "California Housing dataset from scikit-learn",
+      "source_url": "https://scikit-learn.org/stable/datasets/real_world.html#california-housing-dataset",
+      "expected_format": "csv",
+      "schema": {
+        "columns": ["MedInc", "HouseAge", "AveRooms", "AveBedrms", "Population", "AveOccup", "Latitude", "Longitude"],
+        "target_column": "target",
+        "data_types": {
+          "MedInc": "float64",
+          "HouseAge": "float64", 
+          "AveRooms": "float64",
+          "AveBedrms": "float64",
+          "Population": "float64",
+          "AveOccup": "float64",
+          "Latitude": "float64",
+          "Longitude": "float64",
+          "target": "float64"
+        }
+      }
+    },
+    "synthetic_data": {
+      "file_path": "data/synthetic_housing.csv",
+      "check_interval": 7200,
+      "quality_checks": true,
+      "auto_trigger": false,
+      "description": "Synthetic housing data for testing",
+      "enabled": false
+    }
+  },
+  "triggers": {
+    "github_actions": {
+      "enabled": true,
+      "workflow": "mlops-pipeline.yml",
+      "repository": "jayfornet/mlops_assignment_group86",
+      "branch": "main",
+      "dispatch_type": "repository_dispatch",
+      "event_types": ["new-data-version", "data-updated", "external-data-trigger"]
+    },
+    "webhook": {
+      "enabled": false,
+      "url": null,
+      "secret": null,
+      "method": "POST",
+      "headers": {
+        "Content-Type": "application/json"
+      }
+    },
+    "slack": {
+      "enabled": false,
+      "webhook_url": null,
+      "channel": "#mlops-alerts",
+      "username": "Data Monitor Bot"
+    }
+  },
+  "validation": {
+    "min_rows": 100,
+    "max_rows": 1000000,
+    "required_columns": ["MedInc", "HouseAge", "AveRooms", "AveBedrms", "Population", "AveOccup", "Latitude", "Longitude"],
+    "latitude_range": [30, 45],
+    "longitude_range": [-130, -110],
+    "missing_data_threshold": 0.1,
+    "duplicate_threshold": 0.05,
+    "outlier_detection": {
+      "enabled": true,
+      "method": "iqr",
+      "threshold": 3.0
+    },
+    "data_drift": {
+      "enabled": true,
+      "baseline_file": "data/baseline_stats.json",
+      "drift_threshold": 0.1
+    }
+  },
+  "monitoring": {
+    "schedule": {
+      "enabled": true,
+      "cron": "0 * * * *",
+      "timezone": "UTC"
+    },
+    "logging": {
+      "level": "INFO",
+      "file": "logs/data_monitoring.log",
+      "format": "%(asctime)s - %(levelname)s - %(message)s",
+      "rotation": {
+        "max_size": "10MB",
+        "backup_count": 5
+      }
+    },
+    "metrics": {
+      "enabled": true,
+      "export_path": "data/monitoring_metrics.json",
+      "include_stats": true,
+      "include_validation_results": true
+    }
+  },
+  "data_versioning": {
+    "strategy": "semantic",
+    "auto_increment": "minor",
+    "version_file": "data/data_metadata.json",
+    "backup": {
+      "enabled": true,
+      "keep_versions": 10,
+      "backup_path": "data/backups"
+    }
+  },
+  "alerts": {
+    "data_quality_failures": {
+      "enabled": true,
+      "severity": "high",
+      "channels": ["github_actions", "webhook"]
+    },
+    "data_drift_detected": {
+      "enabled": true,
+      "severity": "medium",
+      "channels": ["github_actions"]
+    },
+    "no_data_updates": {
+      "enabled": true,
+      "severity": "low",
+      "threshold_days": 7,
+      "channels": ["webhook"]
+    }
+  },
+  "external_sources": {
+    "kaggle": {
+      "enabled": false,
+      "datasets": [],
+      "api_key": null,
+      "download_path": "data/external"
+    },
+    "s3": {
+      "enabled": false,
+      "bucket": null,
+      "prefix": "housing-data/",
+      "region": "us-west-2"
+    },
+    "ftp": {
+      "enabled": false,
+      "host": null,
+      "username": null,
+      "password": null,
+      "path": "/data"
+    }
+  }
+}

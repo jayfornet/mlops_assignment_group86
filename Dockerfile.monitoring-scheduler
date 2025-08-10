@@ -1,0 +1,55 @@
+# Multi-stage build for data monitoring scheduler
+FROM python:3.9-slim as base
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    cron \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install additional dependencies for data monitoring
+RUN pip install --no-cache-dir schedule requests pandas numpy scikit-learn
+
+# Copy application code
+COPY scripts/ ./scripts/
+COPY config/ ./config/
+COPY src/ ./src/
+
+# Create necessary directories
+RUN mkdir -p /app/data /app/logs
+
+# Create cron job for periodic monitoring
+RUN echo "0 * * * * cd /app && python scripts/data_monitoring.py --config config/data_monitoring.json >> logs/data_monitoring.log 2>&1" > /etc/cron.d/data-monitoring
+
+# Give execution rights on the cron job
+RUN chmod 0644 /etc/cron.d/data-monitoring
+
+# Apply cron job
+RUN crontab /etc/cron.d/data-monitoring
+
+# Create startup script
+RUN echo '#!/bin/bash' > /app/start-scheduler.sh && \
+    echo 'echo "Starting data monitoring scheduler..."' >> /app/start-scheduler.sh && \
+    echo 'echo "Running initial data check..."' >> /app/start-scheduler.sh && \
+    echo 'python scripts/data_monitoring.py --config config/data_monitoring.json' >> /app/start-scheduler.sh && \
+    echo 'echo "Starting cron daemon..."' >> /app/start-scheduler.sh && \
+    echo 'cron -f' >> /app/start-scheduler.sh && \
+    chmod +x /app/start-scheduler.sh
+
+# Create non-root user
+RUN groupadd -r scheduler && useradd -r -g scheduler scheduler
+RUN chown -R scheduler:scheduler /app
+
+# Switch to non-root user (but keep root for cron)
+# USER scheduler
+
+# Default command
+CMD ["/app/start-scheduler.sh"]

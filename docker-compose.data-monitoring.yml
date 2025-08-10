@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  # Data Webhook Server
+  data-webhook-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.webhook
+    container_name: housing-data-webhook
+    ports:
+      - "5555:5555"
+    environment:
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-default-secret-change-me}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-jayfornet/mlops_assignment_group86}
+      - FLASK_ENV=production
+    volumes:
+      - ./scripts:/app/scripts:ro
+      - ./config:/app/config:ro
+      - ./data:/app/data
+      - ./logs:/app/logs
+    restart: unless-stopped
+    networks:
+      - data-monitoring-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5555/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Data Monitoring Scheduler (runs periodic checks)
+  data-monitoring-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.monitoring-scheduler
+    container_name: housing-data-scheduler
+    environment:
+      - MONITORING_CONFIG=/app/config/data_monitoring.json
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - PYTHONPATH=/app
+    volumes:
+      - ./scripts:/app/scripts:ro
+      - ./config:/app/config:ro
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./src:/app/src:ro
+    restart: unless-stopped
+    depends_on:
+      - data-webhook-server
+    networks:
+      - data-monitoring-network
+    command: ["python", "/app/scripts/data_monitoring.py", "--config", "/app/config/data_monitoring.json"]
+
+  # Redis for job queue (optional, for advanced scheduling)
+  redis:
+    image: redis:7-alpine
+    container_name: housing-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - data-monitoring-network
+    command: ["redis-server", "--appendonly", "yes"]
+
+  # Monitoring Dashboard (optional, for webhook status)
+  webhook-dashboard:
+    image: nginx:alpine
+    container_name: housing-webhook-dashboard
+    ports:
+      - "8888:80"
+    volumes:
+      - ./monitoring/webhook-dashboard:/usr/share/nginx/html:ro
+    restart: unless-stopped
+    networks:
+      - data-monitoring-network
+    depends_on:
+      - data-webhook-server
+
+networks:
+  data-monitoring-network:
+    driver: bridge
+
+volumes:
+  redis_data:

@@ -1,0 +1,416 @@
+name: Data Monitoring Pipeline - Trigger MLOps on Data Changes
+
+# This workflow monitors for new data versions and triggers the MLOps pipeline
+# when data changes are detected
+
+on:
+  schedule:
+    # Check for data changes every hour
+    - cron: '0 * * * *'
+  # repository_dispatch:
+    # Allow external triggers via webhook (optional - for advanced setups)
+    # types: [new-data-version, data-updated, external-data-trigger]
+  workflow_dispatch:
+    # Allow manual triggers
+    inputs:
+      data_source:
+        description: 'Data source that triggered the update'
+        required: false
+        default: 'manual'
+      force_retrain:
+        description: 'Force model retraining even if data unchanged'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+  actions: write  # Needed to trigger other workflows
+
+env:
+  PYTHON_VERSION: 3.9
+  DATA_MONITORING_ENABLED: true
+
+jobs:
+  # Data Change Detection
+  detect-data-changes:
+    runs-on: ubuntu-latest
+    name: Detect Data Changes
+    timeout-minutes: 10
+    outputs:
+      data_changed: ${{ steps.check_changes.outputs.data_changed }}
+      data_version: ${{ steps.check_changes.outputs.data_version }}
+      change_summary: ${{ steps.check_changes.outputs.change_summary }}
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 2  # Get at least 2 commits to compare
+        
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas numpy scikit-learn requests hashlib datetime
+        
+    - name: Check for external data triggers
+      id: external_trigger
+      run: |
+        echo "🔍 Checking trigger source..."
+        if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+          echo "📡 External trigger detected: ${{ github.event.action }}"
+          echo "trigger_type=${{ github.event.action }}" >> $GITHUB_OUTPUT
+          echo "external_trigger=true" >> $GITHUB_OUTPUT
+        else
+          echo "trigger_type=scheduled" >> $GITHUB_OUTPUT
+          echo "external_trigger=false" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: Download latest dataset version
+      id: download_data
+      run: |
+        echo "📥 Downloading latest data version..."
+        python src/data/download_dataset.py
+        
+        # Check if download was successful
+        if [ -f "data/california_housing.csv" ]; then
+          echo "✅ Dataset downloaded successfully"
+          echo "download_success=true" >> $GITHUB_OUTPUT
+        else
+          echo "❌ Dataset download failed"
+          echo "download_success=false" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: Check for data changes
+      id: check_changes
+      run: |
+        echo "🔍 Analyzing data changes..."
+        
+        python << 'EOF'
+        import pandas as pd
+        import hashlib
+        import json
+        import os
+        from datetime import datetime
+        
+        def calculate_data_hash(file_path):
+            """Calculate hash of the dataset for change detection."""
+            if not os.path.exists(file_path):
+                return None
+            
+            try:
+                df = pd.read_csv(file_path)
+                # Create a hash based on data content
+                data_str = df.to_string(index=False)
+                return hashlib.md5(data_str.encode()).hexdigest()
+            except Exception as e:
+                print(f"Error calculating hash: {e}")
+                return None
+        
+        def analyze_data_changes(file_path):
+            """Analyze the current dataset and detect changes."""
+            current_hash = calculate_data_hash(file_path)
+            
+            # Load previous hash if exists
+            metadata_file = "data/data_metadata.json"
+            previous_hash = None
+            previous_version = "v1.0.0"
+            
+            if os.path.exists(metadata_file):
+                try:
+                    with open(metadata_file, 'r') as f:
+                        metadata = json.load(f)
+                        previous_hash = metadata.get('data_hash')
+                        previous_version = metadata.get('version', 'v1.0.0')
+                except Exception as e:
+                    print(f"Error reading metadata: {e}")
+            
+            # Determine if data changed
+            data_changed = current_hash != previous_hash
+            
+            # Generate new version
+            if data_changed:
+                version_parts = previous_version.replace('v', '').split('.')
+                new_version = f"v{version_parts[0]}.{int(version_parts[1]) + 1}.0"
+            else:
+                new_version = previous_version
+            
+            # Analyze dataset properties
+            df = pd.read_csv(file_path)
+            
+            change_summary = {
+                "data_changed": data_changed,
+                "current_hash": current_hash,
+                "previous_hash": previous_hash,
+                "version": new_version,
+                "rows": len(df),
+                "columns": len(df.columns),
+                "timestamp": datetime.now().isoformat(),
+                "trigger_source": "${{ steps.external_trigger.outputs.trigger_type }}"
+            }
+            
+            # Save updated metadata
+            os.makedirs("data", exist_ok=True)
+            with open(metadata_file, 'w') as f:
+                json.dump(change_summary, f, indent=2)
+            
+            print(f"Data Analysis Results:")
+            print(f"  - Data Changed: {data_changed}")
+            print(f"  - Current Hash: {current_hash}")
+            print(f"  - Previous Hash: {previous_hash}")
+            print(f"  - New Version: {new_version}")
+            print(f"  - Dataset Shape: {df.shape}")
+            
+            # Set GitHub outputs
+            with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                f.write(f"data_changed={str(data_changed).lower()}\n")
+                f.write(f"data_version={new_version}\n")
+                f.write(f"change_summary={json.dumps(change_summary)}\n")
+        
+        # Analyze the dataset
+        if os.path.exists("data/california_housing.csv"):
+            analyze_data_changes("data/california_housing.csv")
+        else:
+            print("❌ Dataset not found, marking as changed to trigger pipeline")
+            with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                f.write("data_changed=true\n")
+                f.write("data_version=v1.0.0\n")
+                f.write("change_summary={\"error\": \"dataset_not_found\"}\n")
+        EOF
+        
+    - name: Handle force retrain option
+      if: github.event.inputs.force_retrain == 'true'
+      run: |
+        echo "🔄 Force retrain requested, marking data as changed"
+        echo "data_changed=true" >> $GITHUB_OUTPUT
+        
+    - name: Commit data metadata updates
+      if: steps.check_changes.outputs.data_changed == 'true'
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        git add data/data_metadata.json
+        git commit -m "Update data metadata for version ${{ steps.check_changes.outputs.data_version }} [skip ci]" || echo "No metadata changes to commit"
+        git push origin ${{ github.ref_name }} || echo "No changes to push"
+
+  # Data Validation and Quality Checks
+  validate-data:
+    runs-on: ubuntu-latest
+    name: Validate Data Quality
+    needs: detect-data-changes
+    if: needs.detect-data-changes.outputs.data_changed == 'true'
+    timeout-minutes: 10
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas numpy scikit-learn matplotlib seaborn
+        
+    - name: Download dataset
+      run: |
+        python src/data/download_dataset.py
+        
+    - name: Validate data quality
+      run: |
+        echo "🔍 Performing data quality checks..."
+        
+        python << 'EOF'
+        import pandas as pd
+        import numpy as np
+        import json
+        
+        def validate_dataset(file_path):
+            """Perform comprehensive data quality validation."""
+            try:
+                df = pd.read_csv(file_path)
+                
+                validation_results = {
+                    "valid": True,
+                    "errors": [],
+                    "warnings": [],
+                    "stats": {}
+                }
+                
+                # Basic checks
+                if df.empty:
+                    validation_results["valid"] = False
+                    validation_results["errors"].append("Dataset is empty")
+                    return validation_results
+                
+                # Check for expected columns (California Housing dataset)
+                expected_columns = ['MedInc', 'HouseAge', 'AveRooms', 'AveBedrms', 
+                                  'Population', 'AveOccup', 'Latitude', 'Longitude']
+                
+                missing_columns = set(expected_columns) - set(df.columns)
+                if missing_columns:
+                    validation_results["errors"].append(f"Missing columns: {missing_columns}")
+                    validation_results["valid"] = False
+                
+                # Check data types
+                numeric_columns = expected_columns
+                for col in numeric_columns:
+                    if col in df.columns and not pd.api.types.is_numeric_dtype(df[col]):
+                        validation_results["errors"].append(f"Column {col} should be numeric")
+                        validation_results["valid"] = False
+                
+                # Check for reasonable value ranges
+                if 'Latitude' in df.columns:
+                    lat_range = (df['Latitude'].min(), df['Latitude'].max())
+                    if lat_range[0] < 30 or lat_range[1] > 45:
+                        validation_results["warnings"].append(f"Latitude range {lat_range} outside expected California bounds")
+                
+                if 'Longitude' in df.columns:
+                    lon_range = (df['Longitude'].min(), df['Longitude'].max())
+                    if lon_range[0] < -130 or lon_range[1] > -110:
+                        validation_results["warnings"].append(f"Longitude range {lon_range} outside expected California bounds")
+                
+                # Calculate statistics
+                validation_results["stats"] = {
+                    "rows": len(df),
+                    "columns": len(df.columns),
+                    "missing_values": df.isnull().sum().sum(),
+                    "duplicate_rows": df.duplicated().sum(),
+                    "memory_usage_mb": df.memory_usage(deep=True).sum() / 1024 / 1024
+                }
+                
+                # Check minimum data requirements
+                if len(df) < 100:
+                    validation_results["valid"] = False
+                    validation_results["errors"].append("Dataset too small (< 100 rows)")
+                
+                print("Data Validation Results:")
+                print(f"  ✅ Valid: {validation_results['valid']}")
+                print(f"  📊 Rows: {validation_results['stats']['rows']}")
+                print(f"  📊 Columns: {validation_results['stats']['columns']}")
+                print(f"  ⚠️  Missing values: {validation_results['stats']['missing_values']}")
+                print(f"  🔄 Duplicates: {validation_results['stats']['duplicate_rows']}")
+                
+                if validation_results["errors"]:
+                    print("  ❌ Errors:")
+                    for error in validation_results["errors"]:
+                        print(f"    - {error}")
+                
+                if validation_results["warnings"]:
+                    print("  ⚠️  Warnings:")
+                    for warning in validation_results["warnings"]:
+                        print(f"    - {warning}")
+                
+                return validation_results
+                
+            except Exception as e:
+                return {
+                    "valid": False,
+                    "errors": [f"Validation failed: {str(e)}"],
+                    "warnings": [],
+                    "stats": {}
+                }
+        
+        # Run validation
+        if os.path.exists("data/california_housing.csv"):
+            results = validate_dataset("data/california_housing.csv")
+            
+            # Save validation results
+            with open("data/validation_results.json", "w") as f:
+                json.dump(results, f, indent=2)
+            
+            # Exit with error if validation failed
+            if not results["valid"]:
+                print("❌ Data validation failed!")
+                exit(1)
+            else:
+                print("✅ Data validation passed!")
+        else:
+            print("❌ Dataset file not found!")
+            exit(1)
+        EOF
+        
+    - name: Upload validation results
+      uses: actions/upload-artifact@v4
+      with:
+        name: data-validation-results
+        path: data/validation_results.json
+        retention-days: 30
+
+  # Trigger MLOps Pipeline
+  trigger-mlops-pipeline:
+    runs-on: ubuntu-latest
+    name: Trigger MLOps Pipeline
+    needs: [detect-data-changes, validate-data]
+    if: needs.detect-data-changes.outputs.data_changed == 'true'
+    timeout-minutes: 5
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Trigger MLOps Pipeline
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const { data: workflow } = await github.rest.actions.createWorkflowDispatch({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            workflow_id: 'mlops-pipeline.yml',
+            ref: 'main',
+            inputs: {
+              'triggered_by': 'data-monitoring-pipeline',
+              'data_version': '${{ needs.detect-data-changes.outputs.data_version }}',
+              'trigger_reason': 'New data version detected'
+            }
+          });
+          
+          console.log('✅ MLOps Pipeline triggered successfully');
+          console.log(`📊 Data Version: ${{ needs.detect-data-changes.outputs.data_version }}`);
+          console.log(`🔗 Pipeline Run: ${workflow.url}`);
+          
+    - name: Send notification
+      run: |
+        echo "📢 Data Monitoring Pipeline Results"
+        echo "=================================="
+        echo "🔄 Data Changed: ${{ needs.detect-data-changes.outputs.data_changed }}"
+        echo "📊 Data Version: ${{ needs.detect-data-changes.outputs.data_version }}"
+        echo "🚀 MLOps Pipeline: Triggered"
+        echo "📅 Timestamp: $(date)"
+        echo ""
+        echo "Change Summary:"
+        echo '${{ needs.detect-data-changes.outputs.change_summary }}' | jq '.'
+        
+  # Cleanup and Reporting
+  cleanup-and-report:
+    runs-on: ubuntu-latest
+    name: Cleanup and Report
+    needs: [detect-data-changes, validate-data, trigger-mlops-pipeline]
+    if: always()
+    
+    steps:
+    - name: Generate monitoring report
+      run: |
+        echo "📊 Data Monitoring Pipeline Report"
+        echo "================================="
+        echo "Trigger: ${{ github.event_name }}"
+        echo "Data Changed: ${{ needs.detect-data-changes.outputs.data_changed }}"
+        echo "Data Version: ${{ needs.detect-data-changes.outputs.data_version }}"
+        echo "Validation: ${{ needs.validate-data.result }}"
+        echo "MLOps Trigger: ${{ needs.trigger-mlops-pipeline.result }}"
+        echo "Timestamp: $(date)"
+        
+        # In a real environment, you could send this to:
+        # - Slack/Teams notification
+        # - Email alert
+        # - Monitoring dashboard
+        # - Log aggregation system

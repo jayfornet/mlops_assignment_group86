@@ -2,6 +2,7 @@ name: MLOps Pipeline - California Housing Prediction
 
 # This workflow handles the main MLOps pipeline (data, models, API)
 # Monitoring-related changes trigger the separate monitoring-pipeline.yml workflow
+# Data monitoring pipeline can trigger this workflow when new data versions are detected
 
 on:
   push:
@@ -11,8 +12,12 @@ on:
       - 'docker-compose.monitoring.yml'
       - 'Dockerfile.monitoring*'
       - '.github/workflows/monitoring-pipeline.yml'
+      - '.github/workflows/data-monitoring-pipeline.yml'
       - 'scripts/setup_monitoring.py'
       - 'scripts/load_test_monitoring.py'
+      - 'scripts/data_monitoring.py'
+      - 'scripts/webhook_server.py'
+      - 'config/data_monitoring.json'
       - 'MONITORING.md'
       - 'ASSIGNMENT_INSTRUCTIONS.md'
   pull_request:
@@ -22,10 +27,37 @@ on:
       - 'docker-compose.monitoring.yml'
       - 'Dockerfile.monitoring*'
       - '.github/workflows/monitoring-pipeline.yml'
+      - '.github/workflows/data-monitoring-pipeline.yml'
       - 'scripts/setup_monitoring.py'
       - 'scripts/load_test_monitoring.py'
+      - 'scripts/data_monitoring.py'
+      - 'scripts/webhook_server.py'
+      - 'config/data_monitoring.json'
       - 'MONITORING.md'
       - 'ASSIGNMENT_INSTRUCTIONS.md'
+  repository_dispatch:
+    # Allow triggers from data monitoring pipeline
+    types: [new-data-version, data-updated, external-data-trigger]
+  workflow_dispatch:
+    # Allow manual triggers with data monitoring context
+    inputs:
+      triggered_by:
+        description: 'What triggered this pipeline run'
+        required: false
+        default: 'manual'
+      data_version:
+        description: 'Data version that triggered this run'
+        required: false
+        default: 'latest'
+      trigger_reason:
+        description: 'Reason for triggering the pipeline'
+        required: false
+        default: 'Manual trigger'
+      force_retrain:
+        description: 'Force model retraining even if no significant changes'
+        type: boolean
+        required: false
+        default: false
 
 # Prevent multiple workflow runs on the same branch
 concurrency:
@@ -41,10 +73,50 @@ env:
   PYTHON_VERSION: 3.9
 
 jobs:
+  # Log Pipeline Trigger Information
+  log-trigger-info:
+    runs-on: ubuntu-latest
+    name: Log Trigger Information
+    timeout-minutes: 5
+    
+    steps:
+    - name: Log pipeline trigger details
+      run: |
+        echo "🚀 MLOps Pipeline Triggered"
+        echo "=========================="
+        echo "Trigger Event: ${{ github.event_name }}"
+        echo "Repository: ${{ github.repository }}"
+        echo "Branch: ${{ github.ref_name }}"
+        echo "Commit SHA: ${{ github.sha }}"
+        echo "Actor: ${{ github.actor }}"
+        echo "Timestamp: $(date)"
+        echo ""
+        
+        # Log data monitoring specific information
+        if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+          echo "📊 Data Monitoring Trigger Details:"
+          echo "Event Type: ${{ github.event.action }}"
+          echo "Data Source: ${{ github.event.client_payload.data_source || 'Not specified' }}"
+          echo "Data Version: ${{ github.event.client_payload.data_version || 'Not specified' }}"
+          echo "Trigger Reason: ${{ github.event.client_payload.trigger_reason || 'Not specified' }}"
+          echo "Force Trigger: ${{ github.event.client_payload.force_trigger || 'false' }}"
+        elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "🔧 Manual Trigger Details:"
+          echo "Triggered By: ${{ github.event.inputs.triggered_by || 'manual' }}"
+          echo "Data Version: ${{ github.event.inputs.data_version || 'latest' }}"
+          echo "Trigger Reason: ${{ github.event.inputs.trigger_reason || 'Manual trigger' }}"
+          echo "Force Retrain: ${{ github.event.inputs.force_retrain || 'false' }}"
+        else
+          echo "📝 Git Push Trigger"
+          echo "Last Commit Message: ${{ github.event.head_commit.message || 'N/A' }}"
+        fi
+        echo ""
+
   # Code Quality and Testing
   test:
     runs-on: ubuntu-latest
     name: Test and Code Quality
+    needs: [log-trigger-info]
     timeout-minutes: 15  # Add timeout to prevent hanging jobs
     
     steps:
