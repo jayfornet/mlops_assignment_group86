@@ -1,0 +1,10 @@
+artifact_location: file:C:/JayBITS/Sem3/MLOps/Assignment_1/mlops_assignment_group86/mlruns/340552200834895538/models/m-cabac51daa344305beb2e97ce8e42dda/artifacts
+creation_timestamp: 1756574109485
+experiment_id: '340552200834895538'
+last_updated_timestamp: 1756574111811
+model_id: m-cabac51daa344305beb2e97ce8e42dda
+model_type: null
+name: random_forest_model
+source_run_id: ba4f15d3299d4c1495ae337a5e2d171e
+status: 2
+status_message: null
