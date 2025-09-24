@@ -1,0 +1,10 @@
+artifact_location: file:C:/JayBITS/Sem3/MLOps/Assignment_1/mlops_assignment_group86/mlruns/340552200834895538/models/m-6b56f74e9e0b4b5b8fe0114bd09f08a7/artifacts
+creation_timestamp: 1758691192988
+experiment_id: '340552200834895538'
+last_updated_timestamp: 1758691194746
+model_id: m-6b56f74e9e0b4b5b8fe0114bd09f08a7
+model_type: null
+name: linear_regression_model
+source_run_id: 6d7e8d21ba934bdb851867d7ab77c955
+status: 2
+status_message: null
