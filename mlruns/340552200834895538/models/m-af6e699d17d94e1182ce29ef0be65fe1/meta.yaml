@@ -1,0 +1,10 @@
+artifact_location: file:C:/JayBITS/Sem3/MLOps/Assignment_1/mlops_assignment_group86/mlruns/340552200834895538/models/m-af6e699d17d94e1182ce29ef0be65fe1/artifacts
+creation_timestamp: 1767623145264
+experiment_id: '340552200834895538'
+last_updated_timestamp: 1767623147188
+model_id: m-af6e699d17d94e1182ce29ef0be65fe1
+model_type: null
+name: gradient_boosting_model
+source_run_id: 2bb9fdb1cbff4134b73488e101f31a87
+status: 2
+status_message: null
