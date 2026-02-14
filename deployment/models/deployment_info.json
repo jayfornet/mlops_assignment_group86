@@ -2,7 +2,7 @@
   "status": "ready",
   "model_name": "gradient_boosting",
   "rmse": 0.10901586178292406,
-  "prepared_at": "2026-02-14T22:24:35.256276",
+  "prepared_at": "2026-02-14T23:25:18.759691",
   "files": {
     "model": "best_model.joblib",
     "metadata": "model_metadata.json"
