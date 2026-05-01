@@ -2,7 +2,7 @@
   "model_name": "gradient_boosting",
   "rmse": 0.10901586178292406,
   "run_id": "7d89d875f54746a6a73622ec99e1ec65",
-  "deployment_timestamp": "2026-05-01T15:58:51.181406",
+  "deployment_timestamp": "2026-05-01T16:56:13.410035",
   "model_file": "best_model.joblib",
   "mae": 0.0867893404888388,
   "r2_score": NaN
