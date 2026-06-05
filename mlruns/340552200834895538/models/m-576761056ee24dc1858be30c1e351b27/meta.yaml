@@ -1,0 +1,10 @@
+artifact_location: file:C:/JayBITS/Sem3/MLOps/Assignment_1/mlops_assignment_group86/mlruns/340552200834895538/models/m-576761056ee24dc1858be30c1e351b27/artifacts
+creation_timestamp: 1780636853274
+experiment_id: '340552200834895538'
+last_updated_timestamp: 1780636855881
+model_id: m-576761056ee24dc1858be30c1e351b27
+model_type: null
+name: random_forest_model
+source_run_id: ecb4ce84f9bc4eb89629e075ffb34ee0
+status: 2
+status_message: null
